@@ -44,8 +44,6 @@ th, td { padding: .7rem .9rem; text-align: left; vertical-align: middle; border-
 th { background: #f7f9fc; color: var(--muted); font-size: .85rem; font-weight: bold; }
 tr:last-child td { border-bottom: none; }
 tbody tr:hover td, table tr:hover td { background: #fafbfe; }
-.mine td { background: #f0f5ff; }
-.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* 카드·알림 */
 .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.2rem 1.4rem; margin-bottom: 1.2rem; }
@@ -77,15 +75,6 @@ button.small { padding: .2rem .6rem; font-size: .82rem; color: var(--muted); }
            padding: .8rem 1rem; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 1.2rem; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: 1rem; }
 
-/* 점검표 */
-.status-line { color: var(--muted); margin: -.4rem 0 1rem; }
-.sheet td.chk, .sheet th.chk { width: 3.5rem; text-align: center; }
-.sheet input[type=checkbox] { width: 1.35rem; height: 1.35rem; accent-color: var(--navy); cursor: pointer; }
-.sheet label { display: block; cursor: pointer; }
-.sheet tr:has(input:checked) td { background: #f1f8f4; }
-.add-item { margin-top: 1.5rem; padding: 1rem 1.2rem; background: var(--card); border: 1px dashed #b8c2d3; border-radius: var(--radius); }
-.add-item small { display: block; margin-top: .4rem; }
-
 /* 현황판 요약 타일: "미점검 <b>1</b>" 을 숫자 위·글자 아래로 */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.2rem; }
 .tile { display: flex; flex-direction: column-reverse; background: var(--card); border-radius: var(--radius);
@@ -115,6 +104,8 @@ button.small { padding: .2rem .6rem; font-size: .82rem; color: var(--muted); }
 .remark-input { width: 100%; min-width: 10rem; }
 .remark-input.reason { margin-top: .4rem; border-color: var(--yellow); }
 .nowrap { white-space: nowrap; }
+.sheet td:nth-child(3), .sheet th:nth-child(3), .sheet td:nth-child(4), .sheet th:nth-child(4) { white-space: nowrap; }
+.items input[name=title] { width: 100%; }
 .toolbar .spacer { flex: 1; }
 .tab { padding: .3rem .9rem; border-radius: 999px; color: var(--muted); border: 1px solid var(--line); }
 .tab.on { background: var(--navy); color: #fff; border-color: var(--navy); }

@@ -15,7 +15,7 @@
     {% set res = r.result if (r.result and r.result.status == 'submitted') else None %}
     <tr><td class="code">{{ r.code }}</td><td style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td>
       <td>{{ r.owner_name or '-' }}</td><td>{{ res.checker_name if res else '' }}</td>
-      <td>{% if res %}{{ '유' if res.issue else '무' }}{% else %}미제출{% endif %}</td>
+      <td class="nowrap">{% if res %}{{ '유' if res.issue else '무' }}{% else %}미제출{% endif %}</td>
       <td class="remark">{{ res.remark if res else '' }}</td></tr>
     {% endif %}
     {% endfor %}
