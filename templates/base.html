@@ -13,6 +13,7 @@
   <a href="/">오늘 점검</a>
   {% if g.user.role in ('leader', 'admin') %}<a href="/dashboard">현황판</a>{% endif %}
   <a href="/history">이력 조회</a>
+  <a href="/items">항목 관리</a>
   {% if g.user.role == 'admin' %}<a href="/admin">관리</a>{% endif %}
   <span class="spacer"></span>
   <span class="me">{{ g.user.name }}</span>

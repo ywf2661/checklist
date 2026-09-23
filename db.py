@@ -14,35 +14,30 @@ CREATE TABLE IF NOT EXISTS users(
   fail_count INTEGER NOT NULL DEFAULT 0,
   must_change_pw INTEGER NOT NULL DEFAULT 1,
   active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS systems(
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  owner_id INTEGER REFERENCES users(id),
-  sort INTEGER NOT NULL DEFAULT 0,
-  active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS items(
   id INTEGER PRIMARY KEY,
-  system_id INTEGER NOT NULL REFERENCES systems(id),
-  text TEXT NOT NULL,
-  sort INTEGER NOT NULL DEFAULT 0,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  is_group INTEGER NOT NULL DEFAULT 0,
+  owner_id INTEGER REFERENCES users(id),
   active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS checks(
+CREATE TABLE IF NOT EXISTS results(
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
-  system_id INTEGER NOT NULL REFERENCES systems(id),
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  status TEXT NOT NULL CHECK(status IN ('draft', 'submitted', 'approved')),
+  item_id INTEGER NOT NULL REFERENCES items(id),
+  code TEXT NOT NULL,
+  title TEXT NOT NULL,
+  owner_name TEXT,
+  checker_id INTEGER NOT NULL REFERENCES users(id),
+  issue INTEGER CHECK(issue IN (0, 1)),
   remark TEXT NOT NULL DEFAULT '',
-  has_issue INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK(status IN ('draft', 'submitted')),
   submitted_at TEXT,
+  UNIQUE(date, item_id));
+CREATE TABLE IF NOT EXISTS days(
+  date TEXT PRIMARY KEY,
   approved_by INTEGER REFERENCES users(id),
-  approved_at TEXT,
-  UNIQUE(date, system_id));
-CREATE TABLE IF NOT EXISTS check_items(
-  check_id INTEGER NOT NULL REFERENCES checks(id),
-  item_id INTEGER REFERENCES items(id),
-  item_text TEXT NOT NULL,
-  checked INTEGER NOT NULL DEFAULT 0);
+  approved_at TEXT);
 CREATE TABLE IF NOT EXISTS audit_log(
   id INTEGER PRIMARY KEY,
   at TEXT NOT NULL,
@@ -62,6 +57,10 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
 
 def init_db(path):
     con = sqlite3.connect(path)
+    cols = [r[1] for r in con.execute("PRAGMA table_info(items)")]
+    if cols and "code" not in cols:
+        con.close()
+        raise RuntimeError("checklist.db가 이전 버전 형식입니다. 저장된 점검 기록이 없다면 파일을 지우고 다시 실행하세요.")
     con.executescript(SCHEMA)
     con.close()
 
