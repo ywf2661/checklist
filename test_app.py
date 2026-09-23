@@ -394,6 +394,21 @@ class ReviewFixTest(Base):
         self.assertEqual(self.row("SELECT user_id FROM checks")["user_id"], 2)
 
 
+class StyleTest(Base):
+    def test_status_badges_have_color_classes(self):
+        self.assertEqual(appmod.status_class(None, 0), "st-none")
+        self.assertEqual(appmod.status_class("draft", 0), "st-draft")
+        self.assertEqual(appmod.status_class("submitted", 0), "st-submitted")
+        self.assertEqual(appmod.status_class("submitted", 1), "st-issue")
+        self.assertEqual(appmod.status_class("approved", 1), "st-approved")
+        self.login("m1")
+        self.assertIn('class="badge st-none"', self.text(self.c.get("/")))
+
+    def test_timestamps_display_without_t(self):
+        self.assertEqual(appmod.fmt_dt("2026-09-23T16:01:55"), "2026-09-23 16:01")
+        self.assertEqual(appmod.fmt_dt(None), "-")
+
+
 class BackupTest(Base):
     def test_backup_creates_consistent_copy(self):
         out = tempfile.mkdtemp()

@@ -146,7 +146,20 @@ def status_label(status, has_issue=0):
     return STATUS_NAMES[status] + (" · 이상" if has_issue else "")
 
 
-app.jinja_env.globals["status_label"] = status_label
+def status_class(status, has_issue=0):
+    """상태 배지 색(CSS class). 확인 전 이상 건만 빨강으로 강조한다."""
+    if status == "submitted" and has_issue:
+        return "st-issue"
+    return {None: "st-none", "draft": "st-draft", "submitted": "st-submitted", "approved": "st-approved"}[status]
+
+
+def fmt_dt(value):
+    """저장값 '2026-09-23T16:01:55' → 화면용 '2026-09-23 16:01'."""
+    return value.replace("T", " ")[:16] if value else "-"
+
+
+app.jinja_env.globals.update(status_label=status_label, status_class=status_class)
+app.jinja_env.filters["dt"] = fmt_dt
 
 
 def parse_day(value):

@@ -3,8 +3,8 @@
 {% set live = not check or check.status == 'draft' %}
 {% set writable = (day == today and live) or editing %}
 <h1>{{ system.name }} 점검표 <small>{{ day }}</small></h1>
-<p>상태: <b{% if check and check.has_issue %} class="issue"{% endif %}>{{ status_label(check.status if check else None, check.has_issue if check else 0) }}</b>
-{% if check %} · 점검자: {{ names[check.user_id] }}{% if check.submitted_at %} · 제출: {{ check.submitted_at }}{% endif %}{% if check.approved_at %} · 확인: {{ names[check.approved_by] }} {{ check.approved_at }}{% endif %}{% endif %}</p>
+<p class="status-line"><span class="badge {{ status_class(check.status if check else None, check.has_issue if check else 0) }}">{{ status_label(check.status if check else None, check.has_issue if check else 0) }}</span>
+{% if check %} · 점검자: {{ names[check.user_id] }}{% if check.submitted_at %} · 제출: {{ check.submitted_at|dt }}{% endif %}{% if check.approved_at %} · 확인: {{ names[check.approved_by] }} {{ check.approved_at|dt }}{% endif %}{% endif %}</p>
 {% if error %}<p class="flash">{{ error }}</p>{% endif %}
 <form method="post" class="sheet">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
@@ -15,7 +15,7 @@
     <tr>
       <td class="chk"><input type="checkbox" id="i{{ it.item_id }}" name="item" value="{{ it.item_id }}"{% if it.checked %} checked{% endif %}{% if not writable %} disabled{% endif %}></td>
       <td><label for="i{{ it.item_id }}">{{ it.item_text }}</label></td>
-      {% if live %}<td class="no-print"><button formaction="{{ url_for('deactivate_item', item_id=it.item_id) }}" formnovalidate>미사용</button></td>{% endif %}
+      {% if live %}<td class="no-print"><button formaction="{{ url_for('deactivate_item', item_id=it.item_id) }}" formnovalidate class="small">미사용</button></td>{% endif %}
     </tr>
     {% else %}
     <tr><td colspan="3">점검 항목이 없습니다. 아래에서 추가하세요.</td></tr>
@@ -25,14 +25,14 @@
   <textarea name="remark"{% if not writable %} readonly{% endif %}>{{ remark }}</textarea>
   {% if editing %}
   <p><label>수정 사유 <input name="reason" size="50" required></label></p>
-  <p><button name="action" value="edit">수정 저장</button>
+  <p class="actions"><button name="action" value="edit" class="primary">수정 저장</button>
      <a href="{{ url_for('check_sheet', system_id=system.id, day=day) }}">취소</a></p>
   {% elif writable %}
-  <p><button name="action" value="save">임시저장</button> <button name="action" value="submit">제출</button></p>
+  <p class="actions"><button name="action" value="save">임시저장</button> <button name="action" value="submit" class="primary">제출</button></p>
   {% elif not live %}
-  <p class="no-print"><a href="{{ url_for('check_sheet', system_id=system.id, day=day, edit=1) }}">수정하기</a>
+  <p class="no-print actions"><a href="{{ url_for('check_sheet', system_id=system.id, day=day, edit=1) }}">수정하기</a>
   {% if check.status == 'submitted' and g.user.role in ('leader', 'admin') and check.user_id != g.user.id %}
-    <button formaction="{{ url_for('approve', check_id=check.id) }}" formnovalidate>확인</button>
+    <button formaction="{{ url_for('approve', check_id=check.id) }}" formnovalidate class="primary">확인</button>
   {% endif %}</p>
   {% endif %}
 </form>
@@ -40,7 +40,7 @@
 <form method="post" action="{{ url_for('add_item', system_id=system.id) }}" class="no-print add-item">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <label>새 점검 항목 <input name="text" maxlength="200" size="40" required></label>
-  <button>+ 항목 추가</button><br>
+  <button>+ 항목 추가</button>
   <small>항목을 추가하면 화면이 새로 고쳐집니다. 체크한 내용은 먼저 임시저장하세요. 이미 제출한 점검표에는 다음 점검부터 나타납니다.</small>
 </form>
 {% endif %}

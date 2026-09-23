@@ -12,23 +12,23 @@
     <td>{{ u.name }}</td>
     <td><form method="post" action="{{ url_for('admin_update_user', user_id=u.id) }}" class="inline">{{ csrf() }}
       <select name="role">{% for k, v in roles.items() %}<option value="{{ k }}"{% if k == u.role %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
-      <button name="action" value="role">변경</button></form></td>
-    <td>{% if not u.active %}미사용{% elif u.fail_count >= max_fail %}<span class="issue">잠김</span>{% else %}정상{% endif %}</td>
+      <button name="action" value="role" class="small">변경</button></form></td>
+    <td>{% if not u.active %}<span class="badge st-none">미사용</span>{% elif u.fail_count >= max_fail %}<span class="badge st-issue">잠김</span>{% else %}<span class="badge st-approved">정상</span>{% endif %}</td>
     <td><form method="post" action="{{ url_for('admin_update_user', user_id=u.id) }}" class="inline">{{ csrf() }}
       <input name="password" type="password" placeholder="새 임시 비밀번호" size="14">
-      <button name="action" value="reset_pw">비밀번호 초기화</button>
-      <button name="action" value="unlock">잠금 해제</button>
-      {% if u.active %}<button name="action" value="deactivate">미사용</button>{% else %}<button name="action" value="activate">사용</button>{% endif %}
+      <button name="action" value="reset_pw" class="small">비밀번호 초기화</button>
+      <button name="action" value="unlock" class="small">잠금 해제</button>
+      {% if u.active %}<button name="action" value="deactivate" class="small">미사용</button>{% else %}<button name="action" value="activate" class="small">사용</button>{% endif %}
     </form></td>
   </tr>
   {% endfor %}
 </table>
-<form method="post" action="{{ url_for('admin_add_user') }}">{{ csrf() }}
+<form method="post" action="{{ url_for('admin_add_user') }}" class="toolbar">{{ csrf() }}
   <input name="login_id" placeholder="ID" required>
   <input name="name" placeholder="이름" required>
   <select name="role">{% for k, v in roles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
   <input name="password" type="password" placeholder="임시 비밀번호(8자 이상)" minlength="8" required>
-  <button>사용자 추가</button>
+  <button class="primary">사용자 추가</button>
 </form>
 
 <h2>시스템</h2>
@@ -45,13 +45,13 @@
   </tr>
   {% endfor %}
 </table>
-<form method="post" action="{{ url_for('admin_add_system') }}">{{ csrf() }}
+<form method="post" action="{{ url_for('admin_add_system') }}" class="toolbar">{{ csrf() }}
   <input name="name" placeholder="시스템 이름" required>
   <select name="owner_id"><option value="">담당자 없음</option>
     {% for u in users if u.active %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
   <input name="sort" type="number" value="0" style="width:4rem">
   <input type="hidden" name="active" value="1">
-  <button>시스템 추가</button>
+  <button class="primary">시스템 추가</button>
 </form>
 
 <h2>점검 항목</h2>

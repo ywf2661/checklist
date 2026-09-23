@@ -7,7 +7,7 @@
   <tr{% if r.owner_id == g.user.id %} class="mine"{% endif %}>
     <td><a href="{{ url_for('check_sheet', system_id=r.id, day=today) }}">{{ r.name }}</a></td>
     <td>{{ r.owner_name or '-' }}</td>
-    <td{% if r.has_issue %} class="issue"{% endif %}>{{ status_label(r.status, r.has_issue) }}</td>
+    <td><span class="badge {{ status_class(r.status, r.has_issue) }}">{{ status_label(r.status, r.has_issue) }}</span></td>
   </tr>
   {% else %}
   <tr><td colspan="3">등록된 시스템이 없습니다. 관리자에게 시스템 등록을 요청하세요.</td></tr>
