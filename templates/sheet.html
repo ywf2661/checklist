@@ -8,6 +8,7 @@
 {% if error %}<p class="flash">{{ error }}</p>{% endif %}
 <form method="post" class="sheet">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  {% if check and check.status == 'draft' %}<input type="hidden" name="draft_user" value="{{ check.user_id }}">{% endif %}
   <table>
     <tr><th class="chk">체크</th><th>점검 항목</th>{% if live %}<th class="no-print"></th>{% endif %}</tr>
     {% for it in items %}
@@ -30,7 +31,7 @@
   <p><button name="action" value="save">임시저장</button> <button name="action" value="submit">제출</button></p>
   {% elif not live %}
   <p class="no-print"><a href="{{ url_for('check_sheet', system_id=system.id, day=day, edit=1) }}">수정하기</a>
-  {% if check.status == 'submitted' and g.user.role in ('leader', 'admin') %}
+  {% if check.status == 'submitted' and g.user.role in ('leader', 'admin') and check.user_id != g.user.id %}
     <button formaction="{{ url_for('approve', check_id=check.id) }}" formnovalidate>확인</button>
   {% endif %}</p>
   {% endif %}

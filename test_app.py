@@ -364,6 +364,36 @@ class AdminTest(Base):
         self.assertEqual(self.row("SELECT COUNT(*) AS n FROM audit_log WHERE target = 'system'")["n"], 2)
 
 
+class ReviewFixTest(Base):
+    def test_inactive_system_refuses_new_check(self):
+        self.login("m1")
+        self.exec("UPDATE systems SET active = 0 WHERE id = 1")
+        t = self.text(self.post(URL, action="submit", item=["1", "2"]))
+        self.assertIn("사용하지 않는 시스템", t)
+        self.assertIsNone(self.row("SELECT * FROM checks"))
+
+    def test_leader_cannot_approve_own_check(self):
+        self.login("lead")
+        self.post(URL, action="submit", item=["1", "2"])
+        self.post("/approve/1")
+        self.assertEqual(self.row("SELECT status FROM checks")["status"], "submitted")
+        self.assertIn("본인이 제출한", self.text(self.c.get("/dashboard")))
+
+    def test_stale_page_does_not_overwrite_other_users_draft(self):
+        self.login("m1")
+        self.post(URL, action="save", item=["1"], remark="m1 메모")
+        other = appmod.app.test_client()
+        self.login("m2", client=other)
+        t = self.text(self.post(URL, client=other, action="save", item=["2"], remark="m2"))
+        self.assertIn("M1님이 작성 중", t)
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["user_id"], c["remark"]), (1, "m1 메모"))
+        # 새로고침해서 m1의 작성 내용을 본 뒤에는 이어받아 저장할 수 있다(대무)
+        self.assertIn('name="draft_user" value="1"', self.text(other.get(URL)))
+        self.post(URL, client=other, action="save", item=["1", "2"], remark="m1 메모", draft_user="1")
+        self.assertEqual(self.row("SELECT user_id FROM checks")["user_id"], 2)
+
+
 class BackupTest(Base):
     def test_backup_creates_consistent_copy(self):
         out = tempfile.mkdtemp()

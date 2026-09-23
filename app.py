@@ -243,8 +243,14 @@ def save_sheet(db, system_id, day, check, items):
         abort(400)
     if day != today():
         return "오늘 점검만 작성할 수 있습니다."
+    if not db.execute("SELECT active FROM systems WHERE id = ?", (system_id,)).fetchone()["active"]:
+        return "사용하지 않는 시스템입니다. 새 점검을 작성할 수 없습니다."
     if check and check["status"] != "draft":
         return "다른 사용자가 먼저 제출했습니다."
+    # 다른 사람의 작성중 점검표는 화면에서 그 내용을 본 뒤(draft_user 일치)에만 이어받는다
+    if check and check["user_id"] != g.user["id"] and request.form.get("draft_user") != str(check["user_id"]):
+        owner = db.execute("SELECT name FROM users WHERE id = ?", (check["user_id"],)).fetchone()["name"]
+        return f"{owner}님이 작성 중인 점검표입니다. 새로고침해서 작성 내용을 확인한 뒤 이어서 작성하세요."
     remark, has_issue = apply_form(items)
     if action == "submit":
         if not items:
@@ -350,6 +356,9 @@ def approve(check_id):
     check = db.execute("SELECT * FROM checks WHERE id = ?", (check_id,)).fetchone()
     if check is None:
         abort(404)
+    if check["user_id"] == g.user["id"]:
+        flash("본인이 제출한 점검은 확인할 수 없습니다. 다른 팀장이나 관리자가 확인해야 합니다.")
+        return redirect(url_for("dashboard", day=check["date"]))
     cur = db.execute(
         "UPDATE checks SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ? AND status = 'submitted'",
         (g.user["id"], now(), check_id),
@@ -369,7 +378,7 @@ def dashboard():
     day = parse_day(request.args.get("day") or today())
     rows = get_db().execute(
         """SELECT s.id AS system_id, s.name, o.name AS owner_name, c.id AS check_id, c.status,
-                  c.has_issue, u.name AS checker_name, c.submitted_at
+                  c.has_issue, c.user_id AS checker_id, u.name AS checker_name, c.submitted_at
            FROM systems s
            LEFT JOIN users o ON o.id = s.owner_id
            LEFT JOIN checks c ON c.system_id = s.id AND c.date = ?
