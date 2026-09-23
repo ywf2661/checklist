@@ -14,17 +14,16 @@
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   {% if editing %}<input type="hidden" name="item_id" value="{{ editing }}">{% endif %}
   <table class="sheet">
-    <tr><th>번호</th><th>점검 항목</th><th>담당자</th><th>이상</th><th>비고</th><th>상태</th></tr>
+    <tr><th>점검 항목</th><th>담당자</th><th>이상</th><th>비고</th><th>상태</th></tr>
     {% for r in rows %}
     {% if r.is_group %}
-    <tr class="group"><td class="code">{{ r.code }}</td><td colspan="5" style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td></tr>
+    <tr class="group"><td colspan="5" style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td></tr>
     {% else %}
     {% set res = r.result %}
     {% set open = (writable and not (res and res.status == 'submitted')) or editing == r.id %}
     <tr>
-      <td class="code">{{ r.code }}</td>
-      <td style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td>
-      <td>{{ r.owner_name or '-' }}{% if res and res.checker_id != r.owner_id %}<br><small>점검: {{ res.checker_name }}</small>{% endif %}</td>
+      <td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td>
+      <td class="nowrap">{{ r.owner_name or '-' }}{% if res and res.checker_id != r.owner_id %}<br><small>점검: {{ res.checker_name }}</small>{% endif %}</td>
       {% if open %}
       <td class="issue-pick">
         <input type="hidden" name="row" value="{{ r.id }}">
@@ -44,7 +43,7 @@
     </tr>
     {% endif %}
     {% else %}
-    <tr><td colspan="6">{% if view == 'mine' %}내 담당 항목이 없습니다. '전체'를 눌러 보세요.{% else %}등록된 점검 항목이 없습니다. '항목 관리'에서 추가하세요.{% endif %}</td></tr>
+    <tr><td colspan="5">{% if view == 'mine' %}내 담당 항목이 없습니다. '전체'를 눌러 보세요.{% else %}등록된 점검 항목이 없습니다. '항목 관리'에서 추가하세요.{% endif %}</td></tr>
     {% endfor %}
   </table>
   {% if editing %}

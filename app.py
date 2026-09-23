@@ -146,21 +146,7 @@ def fmt_dt(value):
     return value.replace("T", " ")[:16] if value else "-"
 
 
-CODE_RE = re.compile(r"^\d+(-\d+)*$")
-
-
-def norm_code(value):
-    """'1-1-1.' → '1-1-1'. 형식이 틀리면 None."""
-    code = (value or "").strip().rstrip(".").strip()
-    return code if CODE_RE.match(code) else None
-
-
-def code_key(code):
-    return tuple(int(p) for p in code.split("-"))
-
-
 app.jinja_env.filters["dt"] = fmt_dt
-app.jinja_env.filters["depth"] = lambda code: code.count("-")
 
 
 def parse_day(value):
@@ -170,62 +156,97 @@ def parse_day(value):
         abort(400)
 
 
-# ---------------------------------------------------------------- 점검 항목
+# ---------------------------------------------------------------- 점검 항목(트리)
 
-ITEM_COLS = ("code", "title", "is_group", "owner_id", "active", "retired_on")
+ITEM_COLS = ("parent_id", "sort", "title", "is_group", "owner_id", "active", "retired_on")
+OWNER_RE = re.compile(r"^(.*?)\s*\(([^()]*)\)$")
 
 
 def load_items(db, active_only=True):
-    sql = """SELECT i.*, u.name AS owner_name, u.login_id AS owner_login
-             FROM items i LEFT JOIN users u ON u.id = i.owner_id"""
-    if active_only:
-        sql += " WHERE i.active = 1"
-    return sorted((dict(r) for r in db.execute(sql)), key=lambda r: code_key(r["code"]))
+    """항목을 트리 순서로. 각 dict에 depth(깊이)와 path(상위 구분 이름 목록)를 붙인다.
+    active_only면 미사용 항목과 그 하위는 뺀다."""
+    rows = [dict(r) for r in db.execute("""SELECT i.*, u.name AS owner_name, u.login_id AS owner_login
+                                           FROM items i LEFT JOIN users u ON u.id = i.owner_id""")]
+    kids = {}
+    for r in rows:
+        kids.setdefault(r["parent_id"], []).append(r)
+    out = []
+
+    def walk(parent_id, depth, path):
+        for r in sorted(kids.get(parent_id, []), key=lambda r: (r["sort"], r["id"])):
+            if active_only and not r["active"]:
+                continue
+            r["depth"], r["path"] = depth, path
+            out.append(r)
+            walk(r["id"], depth + 1, path + [r["title"]])
+
+    walk(None, 0, [])
+    return out
+
+
+def subtree_ids(db, item_id):
+    """item_id와 그 모든 하위 항목 id."""
+    kids = {}
+    for r in db.execute("SELECT id, parent_id FROM items"):
+        kids.setdefault(r["parent_id"], []).append(r["id"])
+    ids, todo = set(), [item_id]
+    while todo:
+        i = todo.pop()
+        if i not in ids:
+            ids.add(i)
+            todo.extend(kids.get(i, []))
+    return ids
+
+
+def next_sort(db, parent_id):
+    return db.execute("SELECT COALESCE(MAX(sort), -1) + 1 FROM items WHERE parent_id IS ?", (parent_id,)).fetchone()[0]
 
 
 def item_form(db):
     """항목 폼 검증. (값 dict, None) 또는 (None, 오류 메시지)."""
     f = request.form
-    code = norm_code(f.get("code"))
     title = f.get("title", "").strip()[:200]
     is_group = int(f.get("is_group") == "1")
     owner_id = None if is_group else f.get("owner_id", type=int)
-    if not code:
-        return None, "번호는 1, 1-1, 1-1-1 처럼 숫자와 - 로 입력하세요."
+    parent_id = f.get("parent_id", type=int)
     if not title:
         return None, "항목명을 입력하세요."
+    if parent_id is not None:
+        parent = db.execute("SELECT * FROM items WHERE id = ?", (parent_id,)).fetchone()
+        if parent is None or not parent["is_group"] or not parent["active"]:
+            return None, "하위 항목은 사용 중인 구분 아래에만 둘 수 있습니다."
     if not is_group:
         if owner_id is None:
             return None, "점검 항목은 담당자를 지정해야 합니다."
         if db.execute("SELECT 1 FROM users WHERE id = ? AND active = 1", (owner_id,)).fetchone() is None:
             return None, "사용 중인 사용자만 담당자로 지정할 수 있습니다."
-    return {"code": code, "title": title, "is_group": is_group, "owner_id": owner_id}, None
+    return {"parent_id": parent_id, "title": title, "is_group": is_group, "owner_id": owner_id}, None
 
 
-def parse_bulk(text, logins, existing_codes):
-    """'번호 | 항목명 | 담당자ID' 줄들을 해석한다. 담당자가 없으면 구분(제목줄)."""
-    rows, errors, seen = [], [], set(existing_codes)
-    for n, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) not in (2, 3):
-            errors.append(f"{n}번째 줄: '번호 | 항목명 | 담당자ID' 형식이 아닙니다.")
-            continue
-        code, title = norm_code(parts[0]), parts[1][:200]
-        login = parts[2] if len(parts) == 3 else ""
-        if not code:
-            errors.append(f"{n}번째 줄: 번호 '{parts[0]}' 형식이 틀렸습니다.")
-        elif code in seen:
-            errors.append(f"{n}번째 줄: 이미 있는 번호 {code} 입니다.")
+def parse_indented(text, logins):
+    """들여쓰기 목록 → ([{title, is_group, owner_id, parent}], [오류]).
+    parent는 목록 안 상위 줄의 순번(없으면 None). 줄 끝 (담당자ID)가 있으면 점검 항목, 없으면 구분."""
+    lines = [(n, line.expandtabs(4).rstrip()) for n, line in enumerate(text.splitlines(), 1) if line.strip()]
+    base = min((len(l) - len(l.lstrip()) for _, l in lines), default=0)
+    rows, errors, stack = [], [], []  # stack: (들여쓰기 폭, rows 순번)
+    for n, line in lines:
+        indent = max(len(line) - len(line.lstrip()) - base, 0)
+        body = line.strip()
+        m = OWNER_RE.match(body)
+        title, login = (m.group(1).strip(), m.group(2).strip()) if m else (body, None)
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1] if stack else None
+        if parent is not None and not rows[parent]["is_group"]:
+            errors.append(f"{n}번째 줄: 점검 항목(담당자가 있는 줄) 아래에는 하위 항목을 둘 수 없습니다.")
         elif not title:
             errors.append(f"{n}번째 줄: 항목명이 비어 있습니다.")
-        elif login and login not in logins:
+        elif login is not None and login not in logins:
             errors.append(f"{n}번째 줄: 담당자 ID '{login}'가 없습니다.")
         else:
-            seen.add(code)
-            rows.append({"code": code, "title": title, "is_group": int(not login),
-                         "owner_id": logins[login] if login else None})
+            stack.append((indent, len(rows)))
+            rows.append({"title": title[:200], "is_group": int(login is None),
+                         "owner_id": logins[login] if login is not None else None, "parent": parent})
     return rows, errors
 
 
@@ -233,8 +254,13 @@ def parse_bulk(text, logins, existing_codes):
 @login_required()
 def items_page():
     db = get_db()
-    return render_template("items.html", items=load_items(db, active_only=False),
-                           users=db.execute("SELECT * FROM users ORDER BY active DESC, name").fetchall())
+    items = load_items(db, active_only=False)
+    edit = request.args.get("edit", type=int)
+    blocked = subtree_ids(db, edit) if edit else set()
+    return render_template(
+        "items.html", items=items, add=request.args.get("add"), edit=edit,
+        groups=[i for i in items if i["is_group"] and i["active"] and i["id"] not in blocked],
+        users=db.execute("SELECT * FROM users ORDER BY active DESC, name").fetchall())
 
 
 @app.post("/items")
@@ -245,18 +271,12 @@ def add_item():
     if error:
         flash(error)
         return redirect(url_for("items_page"))
-    try:
-        item_id = db.execute(
-            "INSERT INTO items(code, title, is_group, owner_id, created_on)"
-            " VALUES(:code, :title, :is_group, :owner_id, :created_on)", {**values, "created_on": today()}
-        ).lastrowid
-    except sqlite3.IntegrityError:
-        db.rollback()
-        flash(f"이미 있는 번호 {values['code']} 입니다.")
-        return redirect(url_for("items_page"))
+    values.update(sort=next_sort(db, values["parent_id"]), created_on=today())
+    item_id = db.execute("""INSERT INTO items(parent_id, sort, title, is_group, owner_id, created_on)
+                            VALUES(:parent_id, :sort, :title, :is_group, :owner_id, :created_on)""", values).lastrowid
     audit(db, g.user["id"], "item", item_id, "add", after=values)
     db.commit()
-    flash(f"{values['code']} 항목을 추가했습니다.")
+    flash(f"'{values['title']}' 항목을 추가했습니다.")
     return redirect(url_for("items_page"))
 
 
@@ -268,28 +288,48 @@ def update_item(item_id):
     if row is None:
         abort(404)
     values, error = item_form(db)
+    if not error and values["parent_id"] in subtree_ids(db, item_id):
+        error = "자기 자신이나 하위 항목 밑으로는 옮길 수 없습니다."
+    if not error and values["is_group"] != row["is_group"]:
+        if db.execute("SELECT 1 FROM results WHERE item_id = ?", (item_id,)).fetchone():
+            error = "점검 기록이 있는 항목은 종류(구분/점검)를 바꿀 수 없습니다. 미사용 처리 후 새로 추가하세요."
+        elif db.execute("SELECT 1 FROM items WHERE parent_id = ?", (item_id,)).fetchone():
+            error = "하위 항목이 있는 구분은 점검 항목으로 바꿀 수 없습니다."
     if error:
-        flash(f"{row['code']}: {error}")
-        return redirect(url_for("items_page"))
+        flash(f"'{row['title']}': {error}")
+        return redirect(url_for("items_page", edit=item_id))
     values["active"] = int(request.form.get("active") == "1")
-    if values["is_group"] != row["is_group"] and db.execute(
-            "SELECT 1 FROM results WHERE item_id = ?", (item_id,)).fetchone():
-        flash(f"{row['code']}: 점검 기록이 있는 항목은 종류(구분/점검)를 바꿀 수 없습니다. 미사용 처리 후 새로 추가하세요.")
-        return redirect(url_for("items_page"))
     if values["active"] != row["active"]:
         values["retired_on"] = None if values["active"] else today()
     else:
         values["retired_on"] = row["retired_on"]
-    try:
-        db.execute("UPDATE items SET code = :code, title = :title, is_group = :is_group, owner_id = :owner_id,"
-                   " active = :active, retired_on = :retired_on WHERE id = :id", {**values, "id": item_id})
-    except sqlite3.IntegrityError:
-        db.rollback()
-        flash(f"이미 있는 번호 {values['code']} 입니다.")
-        return redirect(url_for("items_page"))
+    values["sort"] = row["sort"] if values["parent_id"] == row["parent_id"] else next_sort(db, values["parent_id"])
+    db.execute("""UPDATE items SET parent_id = :parent_id, sort = :sort, title = :title, is_group = :is_group,
+                  owner_id = :owner_id, active = :active, retired_on = :retired_on WHERE id = :id""",
+               {**values, "id": item_id})
     audit(db, g.user["id"], "item", item_id, "update", before={k: row[k] for k in ITEM_COLS}, after=values)
     db.commit()
-    flash(f"{values['code']} 항목을 저장했습니다.")
+    flash(f"'{values['title']}' 항목을 저장했습니다.")
+    return redirect(url_for("items_page"))
+
+
+@app.post("/items/<int:item_id>/move")
+@login_required()
+def move_item(item_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        abort(404)
+    ids = [r["id"] for r in db.execute(
+        "SELECT id FROM items WHERE parent_id IS ? ORDER BY sort, id", (row["parent_id"],))]
+    i = ids.index(item_id)
+    j = i - 1 if request.form.get("direction") == "up" else i + 1
+    if 0 <= j < len(ids):
+        ids[i], ids[j] = ids[j], ids[i]
+        for n, sid in enumerate(ids):
+            db.execute("UPDATE items SET sort = ? WHERE id = ?", (n, sid))
+        audit(db, g.user["id"], "item", item_id, "move", after={"direction": request.form.get("direction")})
+        db.commit()
     return redirect(url_for("items_page"))
 
 
@@ -298,19 +338,21 @@ def update_item(item_id):
 def bulk_items():
     db = get_db()
     logins = {r["login_id"]: r["id"] for r in db.execute("SELECT id, login_id FROM users WHERE active = 1")}
-    codes = {r["code"] for r in db.execute("SELECT code FROM items")}
-    rows, errors = parse_bulk(request.form.get("text", ""), logins, codes)
+    rows, errors = parse_indented(request.form.get("text", ""), logins)
     if errors:
         for e in errors:
             flash(e)
         flash("오류가 있어 아무것도 등록하지 않았습니다. 고쳐서 다시 붙여넣으세요.")
         return redirect(url_for("items_page"))
-    for values in rows:
-        item_id = db.execute(
-            "INSERT INTO items(code, title, is_group, owner_id, created_on)"
-            " VALUES(:code, :title, :is_group, :owner_id, :created_on)", {**values, "created_on": today()}
-        ).lastrowid
-        audit(db, g.user["id"], "item", item_id, "add", after=values)
+    ids = []
+    for r in rows:
+        parent_id = ids[r["parent"]] if r["parent"] is not None else None
+        values = {"parent_id": parent_id, "sort": next_sort(db, parent_id), "title": r["title"],
+                  "is_group": r["is_group"], "owner_id": r["owner_id"], "created_on": today()}
+        ids.append(db.execute("""INSERT INTO items(parent_id, sort, title, is_group, owner_id, created_on)
+                                 VALUES(:parent_id, :sort, :title, :is_group, :owner_id, :created_on)""",
+                              values).lastrowid)
+        audit(db, g.user["id"], "item", ids[-1], "add", after=values)
     db.commit()
     flash(f"{len(rows)}개 항목을 등록했습니다.")
     return redirect(url_for("items_page"))
@@ -348,34 +390,40 @@ def existed(it, day):
 
 
 def sheet_rows(db, day):
-    """그날 표의 줄(번호순). 점검 줄에는 'result'를 붙이고, 제출된 줄은 제출 당시 번호·항목명·담당자를 보여준다.
-    그날 대상이 아닌 항목(추가 전·미사용 후)은 제출 기록이 있을 때만 나온다."""
+    """그날 표의 줄(트리 순서). 점검 줄에는 'result'를 붙이고, 제출된 줄은 제출 당시 항목명·담당자·구분 경로를 보여준다.
+    그날 대상이 아닌 항목(추가 전·미사용 후, 또는 상위 구분이 그런 경우)은 제출 기록이 있을 때만 나온다."""
     results = {r["item_id"]: dict(r) for r in db.execute(
         "SELECT r.*, u.name AS checker_name FROM results r JOIN users u ON u.id = r.checker_id WHERE r.date = ?",
         (day,))}
-    rows = []
+    rows, alive = [], {}
     for it in load_items(db, active_only=False):
+        alive[it["id"]] = existed(it, day) and (it["parent_id"] is None or alive.get(it["parent_id"], False))
+        it["path_text"] = " > ".join(it["path"])
         res = results.get(it["id"])
         if it["is_group"]:
-            if existed(it, day):
+            if alive[it["id"]]:
                 rows.append(it)
             continue
         if res and res["status"] == "submitted":
-            it.update(code=res["code"], title=res["title"], owner_name=res["owner_name"])
-        elif not existed(it, day):
+            it.update(title=res["title"], owner_name=res["owner_name"], path_text=res["path"])
+        elif not alive[it["id"]]:
             continue
         it["result"] = res
         rows.append(it)
-    rows.sort(key=lambda r: code_key(r["code"]))
     return rows
 
 
 def keep_with_groups(rows, keep):
     """keep()을 통과한 점검 줄과, 그 줄들의 상위 구분 줄만 남긴다."""
-    codes = [r["code"] for r in rows if not r["is_group"] and keep(r)]
-    return [r for r in rows
-            if (not r["is_group"] and keep(r))
-            or (r["is_group"] and any(c.startswith(r["code"] + "-") for c in codes))]
+    parent = {r["id"]: r["parent_id"] for r in rows}
+    ids = set()
+    for r in rows:
+        if not r["is_group"] and keep(r):
+            i = r["id"]
+            while i is not None and i not in ids:
+                ids.add(i)
+                i = parent.get(i)
+    return [r for r in rows if r["id"] in ids]
 
 
 def submitted(r):
@@ -426,21 +474,21 @@ def save_rows(db, day, action):
             continue
         submit = action == "submit" and issue is not None
         if submit and issue == 1 and not remark:
-            return f"{it['code']} 항목: 이상 '유'는 비고를 입력해야 합니다.", None
+            return f"'{it['title']}' 항목: 이상 '유'는 비고를 입력해야 합니다.", None
         changes.append((it, res, issue, remark, submit))
     if action == "submit" and not any(c[4] for c in changes):
         return "제출할 항목이 없습니다. 이상 유/무를 선택하세요.", None
     try:
         for it, res, issue, remark, submit in changes:
-            vals = {"date": day, "item_id": it["id"], "code": it["code"], "title": it["title"],
+            vals = {"date": day, "item_id": it["id"], "path": " > ".join(it["path"]), "title": it["title"],
                     "owner_name": it["owner_name"], "checker_id": g.user["id"], "issue": issue, "remark": remark,
                     "status": "submitted" if submit else "draft", "submitted_at": now() if submit else None}
             if res is None:
-                db.execute("""INSERT INTO results(date, item_id, code, title, owner_name, checker_id, issue, remark,
-                              status, submitted_at) VALUES(:date, :item_id, :code, :title, :owner_name, :checker_id,
+                db.execute("""INSERT INTO results(date, item_id, path, title, owner_name, checker_id, issue, remark,
+                              status, submitted_at) VALUES(:date, :item_id, :path, :title, :owner_name, :checker_id,
                               :issue, :remark, :status, :submitted_at)""", vals)
             else:
-                cur = db.execute("""UPDATE results SET code = :code, title = :title, owner_name = :owner_name,
+                cur = db.execute("""UPDATE results SET path = :path, title = :title, owner_name = :owner_name,
                               checker_id = :checker_id, issue = :issue, remark = :remark, status = :status,
                               submitted_at = :submitted_at
                               WHERE date = :date AND item_id = :item_id AND status = 'draft'""", vals)
@@ -449,7 +497,7 @@ def save_rows(db, day, action):
                     return CONFLICT, None
             if submit:
                 audit(db, g.user["id"], "result", it["id"], "submit",
-                      after={"date": day, "code": it["code"], "issue": issue, "remark": remark})
+                      after={"date": day, "title": it["title"], "issue": issue, "remark": remark})
     except sqlite3.IntegrityError:
         db.rollback()
         return CONFLICT, None
@@ -479,8 +527,8 @@ def edit_row(db, day, item_id):
         return "이상 '유'는 비고를 입력해야 합니다.", None
     db.execute("UPDATE results SET issue = ?, remark = ? WHERE id = ?", (issue, remark, res["id"]))
     audit(db, g.user["id"], "result", item_id, "edit",
-          before={"date": day, "code": res["code"], "issue": res["issue"], "remark": res["remark"]},
-          after={"date": day, "code": res["code"], "issue": issue, "remark": remark}, reason=reason)
+          before={"date": day, "title": res["title"], "issue": res["issue"], "remark": res["remark"]},
+          after={"date": day, "title": res["title"], "issue": issue, "remark": remark}, reason=reason)
     unapprove(db, day, "항목 수정으로 확인 해제")
     db.commit()
     return None, "수정했습니다."
@@ -582,7 +630,7 @@ def approve_day(day):
 
 # ---------------------------------------------------------------- 이력·출력
 
-CSV_HEADER = ["날짜", "번호", "점검항목", "담당자", "점검자", "이상", "비고", "상태", "제출시각", "확인자", "확인시각"]
+CSV_HEADER = ["날짜", "구분", "점검항목", "담당자", "점검자", "이상", "비고", "상태", "제출시각", "확인자", "확인시각"]
 
 
 def csv_cell(v):
@@ -612,7 +660,7 @@ def history():
             for r in d["rows"]:
                 res = r["result"]
                 w.writerow([csv_cell(v) for v in (
-                    d["date"], r["code"], r["title"], r["owner_name"],
+                    d["date"], r["path_text"], r["title"], r["owner_name"],
                     res["checker_name"] if res else "",
                     ("유" if res["issue"] else "무") if res and res["issue"] is not None else "",
                     res["remark"] if res else "",

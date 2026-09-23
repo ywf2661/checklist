@@ -252,14 +252,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((errors, rows[1]["parent"]), ([], 0))
 
     def test_parse_indented_errors(self):
-        text = ("구분A
-    점검 (m1)
-        점검 아래 (m1)
-    없는 사람 (zz)
-"
-                "    녹취서버(IPPBX) (m1)
-  어긋난 줄 (m1)
-(m1)")
+        text = "\n".join([
+            "구분A",
+            "    점검 (m1)",
+            "        점검 아래 (m1)",
+            "    없는 사람 (zz)",
+            "    녹취서버(IPPBX) (m1)",
+            "  어긋난 줄 (m1)",
+            "(m1)",
+        ])
         rows, errors = appmod.parse_indented(text, {"m1": 1})
         self.assertEqual(len(errors), 3)
         self.assertIn("3번째 줄", errors[0])  # 점검 항목 아래
@@ -582,6 +583,7 @@ class ReviewFixTest(Base):
         self.submit_all()
         appmod.app.config["TODAY"] = "2026-09-24"
         self.post("/items", parent_id="2", title="지점 네트워크", is_group="0", owner_id="1")
+        self.c.get("/items")  # 추가 알림 소비
         self.assertNotIn("지점 네트워크", self.text(self.c.get(f"/?day={DAY}&view=all")))
         self.post(f"/approve/{DAY}", client=self.lead())
         self.assertEqual(self.row("SELECT approved_by FROM days")["approved_by"], 3)

@@ -37,9 +37,9 @@
 {% if s.issues %}
 <h2>이상 항목</h2>
 <table>
-  <tr><th>번호</th><th>항목</th><th>담당자</th><th>점검자</th><th>비고</th></tr>
+  <tr><th>구분</th><th>항목</th><th>담당자</th><th>점검자</th><th>비고</th></tr>
   {% for r in s.issues %}
-  <tr><td class="code">{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.owner_name }}</td><td>{{ r.result.checker_name }}</td><td class="remark issue">{{ r.result.remark }}</td></tr>
+  <tr><td><small>{{ r.path_text }}</small></td><td>{{ r.title }}</td><td>{{ r.owner_name }}</td><td>{{ r.result.checker_name }}</td><td class="remark issue">{{ r.result.remark }}</td></tr>
   {% endfor %}
 </table>
 {% endif %}
@@ -47,10 +47,10 @@
 {% if s.missing %}
 <h2>미제출 항목</h2>
 <table>
-  <tr><th>번호</th><th>항목</th><th>담당자</th><th>상태</th></tr>
+  <tr><th>구분</th><th>항목</th><th>담당자</th><th>상태</th></tr>
   {% for r in s.missing %}
   {% set label, cls = row_badge(r.result) %}
-  <tr><td class="code">{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.owner_name or '-' }}</td><td><span class="badge {{ cls }}">{{ label }}</span></td></tr>
+  <tr><td><small>{{ r.path_text }}</small></td><td>{{ r.title }}</td><td>{{ r.owner_name or '-' }}</td><td><span class="badge {{ cls }}">{{ label }}</span></td></tr>
   {% endfor %}
 </table>
 {% endif %}

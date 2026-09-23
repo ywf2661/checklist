@@ -1,44 +1,63 @@
 {% extends "base.html" %}
 {% block content %}
 {% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token() }}">{% endmacro %}
-{% macro owner_select(form_id, current) %}
-<select {% if form_id %}form="{{ form_id }}" {% endif %}name="owner_id"><option value="">-</option>
+{% macro owner_select(current) %}
+<select name="owner_id"><option value="">담당자</option>
   {% for u in users %}<option value="{{ u.id }}"{% if u.id == current %} selected{% endif %}>{{ u.name }}{% if not u.active %} (미사용){% endif %}</option>{% endfor %}
 </select>
 {% endmacro %}
+{% macro add_form(parent_id, depth, default_group) %}
+<tr class="add-row" id="add"><td colspan="4" style="padding-left: {{ '%.1f'|format(0.9 + depth * 1.4) }}rem">
+  <form method="post" action="{{ url_for('add_item') }}" class="inline-form">{{ csrf() }}
+    <input type="hidden" name="parent_id" value="{{ parent_id if parent_id is not none else '' }}">
+    <input name="title" placeholder="항목명" required autofocus>
+    <label><input type="radio" name="is_group" value="0"{% if not default_group %} checked{% endif %}> 점검</label>
+    <label><input type="radio" name="is_group" value="1"{% if default_group %} checked{% endif %}> 구분</label>
+    {{ owner_select(None) }}
+    <button class="primary">추가</button> <a href="{{ url_for('items_page') }}">취소</a>
+  </form></td></tr>
+{% endmacro %}
 <h1>항목 관리</h1>
-<p><small>종이 점검표의 번호 그대로 입력하세요. 번호 순서로 자동 정렬됩니다. <b>구분</b>은 제목줄(입력 없음), <b>점검</b>은 담당자가 이상 유/무를 입력하는 줄입니다.</small></p>
+<p><small><b>■ 구분</b>은 제목줄, <b>· 점검</b>은 담당자가 이상 유/무를 입력하는 줄입니다.
+  구분 옆 <b>+하위</b>로 그 아래에 항목을 추가하고, <b>↑↓</b>로 순서를 바꿉니다.</small></p>
 <table class="items">
-  <tr><th>번호</th><th>항목명</th><th>종류</th><th>담당자</th><th>사용</th><th></th></tr>
+  <tr><th>항목</th><th>담당자</th><th>상태</th><th></th></tr>
   {% for i in items %}
   <tr class="{{ 'group' if i.is_group }}{{ ' inactive' if not i.active }}">
-    <td><input form="it{{ i.id }}" name="code" value="{{ i.code }}" size="7" required></td>
-    <td style="padding-left: {{ 0.9 + (i.code|depth) * 1.2 }}rem"><input form="it{{ i.id }}" name="title" value="{{ i.title }}" size="34" required></td>
-    <td><select form="it{{ i.id }}" name="is_group">
-      <option value="1"{% if i.is_group %} selected{% endif %}>구분</option>
-      <option value="0"{% if not i.is_group %} selected{% endif %}>점검</option></select></td>
-    <td>{{ owner_select("it" ~ i.id, i.owner_id) }}</td>
-    <td><input form="it{{ i.id }}" name="active" type="checkbox" value="1"{% if i.active %} checked{% endif %}></td>
-    <td><form id="it{{ i.id }}" method="post" action="{{ url_for('update_item', item_id=i.id) }}">{{ csrf() }}<button class="small">저장</button></form></td>
+    <td style="padding-left: {{ '%.1f'|format(0.9 + i.depth * 1.4) }}rem">{{ '■' if i.is_group else '·' }} {{ i.title }}</td>
+    <td class="nowrap">{{ i.owner_name or '' }}</td>
+    <td>{% if not i.active %}<span class="badge st-none">미사용</span>{% endif %}</td>
+    <td class="nowrap tree-actions">
+      {% if i.is_group and i.active %}<a href="{{ url_for('items_page', add=i.id) }}#add">+하위</a>{% endif %}
+      <form method="post" action="{{ url_for('move_item', item_id=i.id) }}">{{ csrf() }}<button name="direction" value="up" class="small" title="위로">↑</button><button name="direction" value="down" class="small" title="아래로">↓</button></form>
+      <a href="{{ url_for('items_page', edit=i.id) }}#edit">수정</a>
+    </td>
   </tr>
+  {% if edit == i.id %}
+  <tr class="add-row" id="edit"><td colspan="4" style="padding-left: {{ '%.1f'|format(0.9 + i.depth * 1.4) }}rem">
+    <form method="post" action="{{ url_for('update_item', item_id=i.id) }}" class="inline-form">{{ csrf() }}
+      <input name="title" value="{{ i.title }}" required>
+      <select name="is_group"><option value="0"{% if not i.is_group %} selected{% endif %}>점검</option><option value="1"{% if i.is_group %} selected{% endif %}>구분</option></select>
+      {{ owner_select(i.owner_id) }}
+      <select name="parent_id" title="상위 구분"><option value="">(맨 위)</option>
+        {% for p in groups %}<option value="{{ p.id }}"{% if p.id == i.parent_id %} selected{% endif %}>{{ '　' * p.depth }}{{ p.title }}</option>{% endfor %}</select>
+      <label><input type="checkbox" name="active" value="1"{% if i.active %} checked{% endif %}> 사용</label>
+      <button class="primary">저장</button> <a href="{{ url_for('items_page') }}">취소</a>
+    </form></td></tr>
+  {% endif %}
+  {% if add == i.id|string %}{{ add_form(i.id, i.depth + 1, False) }}{% endif %}
   {% else %}
-  <tr><td colspan="6">등록된 항목이 없습니다. 아래에서 추가하거나 일괄 등록하세요.</td></tr>
+  <tr><td colspan="4">등록된 항목이 없습니다. 아래 들여쓰기 붙여넣기로 한 번에 등록하거나 맨 위 구분을 추가하세요.</td></tr>
   {% endfor %}
+  {% if add == 'top' %}{{ add_form(None, 0, True) }}{% endif %}
 </table>
+<p><a href="{{ url_for('items_page', add='top') }}#add">+ 맨 위 구분 추가</a></p>
 
-<h2>한 줄 추가</h2>
-<form method="post" action="{{ url_for('add_item') }}" class="toolbar">{{ csrf() }}
-  <input name="code" placeholder="번호 (예: 1-1-3)" size="12" required>
-  <input name="title" placeholder="항목명" size="30" required>
-  <select name="is_group"><option value="0">점검</option><option value="1">구분</option></select>
-  {{ owner_select(None, None) }}
-  <button class="primary">추가</button>
-</form>
-
-<h2>일괄 등록</h2>
+<h2>들여쓰기 붙여넣기</h2>
 <form method="post" action="{{ url_for('bulk_items') }}" class="card">{{ csrf() }}
-  <p><small>한 줄에 <code>번호 | 항목명 | 담당자ID</code>. 담당자ID를 비우면 구분(제목줄)이 됩니다. 한 줄이라도 틀리면 아무것도 등록되지 않습니다.</small></p>
-  <textarea name="text" rows="8" placeholder="1 | 네트워크 및 시스템 점검&#10;1-1 | 네트워크상태&#10;1-1-1 | 백본 및 각 층 네트워크 상태 | kim"></textarea>
-  <p class="actions"><button class="primary">일괄 등록</button></p>
+  <p><small>들여쓰기(스페이스·탭)로 계층을 나타내고, 점검 항목은 줄 끝에 <code>(담당자ID)</code>를 붙이세요. 괄호가 없으면 구분(제목줄)이 됩니다.
+    기존 목록 맨 뒤에 추가되며, 한 줄이라도 틀리면 아무것도 등록되지 않습니다.</small></p>
+  <textarea name="text" rows="9" placeholder="네트워크 및 시스템 점검&#10;    네트워크상태&#10;        백본 및 각 층 네트워크 상태 (kim)&#10;        인터넷 방화벽,스위치 상태 (kim)"></textarea>
+  <p class="actions"><button class="primary">붙여넣은 목록 등록</button></p>
 </form>
 {% endblock %}

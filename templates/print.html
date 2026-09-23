@@ -7,14 +7,14 @@
 <section class="page">
   <h2>일일 시스템 점검표 — {{ d.date }}</h2>
   <table class="sheet">
-    <tr><th>번호</th><th>점검 항목</th><th>담당자</th><th>점검자</th><th>이상</th><th>비고</th></tr>
+    <tr><th>점검 항목</th><th>담당자</th><th>점검자</th><th>이상</th><th>비고</th></tr>
     {% for r in d.sheet %}
     {% if r.is_group %}
-    <tr class="group"><td class="code">{{ r.code }}</td><td colspan="5">{{ r.title }}</td></tr>
+    <tr class="group"><td colspan="5" style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td></tr>
     {% else %}
     {% set res = r.result if (r.result and r.result.status == 'submitted') else None %}
-    <tr><td class="code">{{ r.code }}</td><td style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td>
-      <td>{{ r.owner_name or '-' }}</td><td>{{ res.checker_name if res else '' }}</td>
+    <tr><td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td>
+      <td class="nowrap">{{ r.owner_name or '-' }}</td><td class="nowrap">{{ res.checker_name if res else '' }}</td>
       <td class="nowrap">{% if res %}{{ '유' if res.issue else '무' }}{% else %}미제출{% endif %}</td>
       <td class="remark">{{ res.remark if res else '' }}</td></tr>
     {% endif %}

@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS users(
   active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS items(
   id INTEGER PRIMARY KEY,
-  code TEXT NOT NULL UNIQUE,
+  parent_id INTEGER REFERENCES items(id),  -- NULL = 맨 위
+  sort INTEGER NOT NULL DEFAULT 0,         -- 같은 구분 안의 순서
   title TEXT NOT NULL,
   is_group INTEGER NOT NULL DEFAULT 0,
   owner_id INTEGER REFERENCES users(id),
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS results(
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
   item_id INTEGER NOT NULL REFERENCES items(id),
-  code TEXT NOT NULL,
+  path TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   owner_name TEXT,
   checker_id INTEGER NOT NULL REFERENCES users(id),
@@ -60,15 +61,10 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
 def init_db(path):
     con = sqlite3.connect(path)
     cols = [r[1] for r in con.execute("PRAGMA table_info(items)")]
-    if cols and "code" not in cols:
+    if cols and "parent_id" not in cols:
         con.close()
         raise RuntimeError("checklist.db가 이전 버전 형식입니다. 저장된 점검 기록이 없다면 파일을 지우고 다시 실행하세요.")
     con.executescript(SCHEMA)
-    cols = [r[1] for r in con.execute("PRAGMA table_info(items)")]
-    for col in ("created_on", "retired_on"):
-        if col not in cols:
-            con.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
-    con.commit()
     con.close()
 
 
