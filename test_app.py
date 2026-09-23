@@ -91,5 +91,48 @@ class SchemaTest(Base):
             self.exec("INSERT INTO checks(date, system_id, user_id, status) VALUES(?, 1, 2, 'draft')", DAY)
 
 
+class AuthTest(Base):
+    def test_pages_require_login(self):
+        r = self.c.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/login", r.headers["Location"])
+
+    def test_login_success(self):
+        r = self.login("m1")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self.c.get("/").status_code, 200)
+
+    def test_post_without_csrf_rejected(self):
+        r = self.c.post("/login", data={"login_id": "m1", "password": PW})
+        self.assertEqual(r.status_code, 400)
+
+    def test_five_failures_lock_account(self):
+        for _ in range(5):
+            self.post("/login", login_id="m1", password="wrong")
+        self.assertIn("잠겼습니다", self.text(self.login("m1")))
+        self.assertEqual(self.row("SELECT fail_count FROM users WHERE id = 1")["fail_count"], 5)
+
+    def test_inactive_user_cannot_login(self):
+        self.exec("UPDATE users SET active = 0 WHERE id = 1")
+        self.assertIn("틀렸습니다", self.text(self.login("m1")))
+
+    def test_must_change_password_first(self):
+        self.exec("UPDATE users SET must_change_pw = 1 WHERE id = 1")
+        self.login("m1")
+        r = self.c.get("/")
+        self.assertIn("/password", r.headers["Location"])
+        r = self.post("/password", current_password=PW, new_password="newpass123", new_password2="newpass123")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self.c.get("/").status_code, 200)
+        self.assertEqual(self.row("SELECT action FROM audit_log")["action"], "change_password")
+
+    def test_change_password_rejects_short_or_wrong_current(self):
+        self.login("m1")
+        t = self.text(self.post("/password", current_password=PW, new_password="short", new_password2="short"))
+        self.assertIn("8자 이상", t)
+        t = self.text(self.post("/password", current_password="x", new_password="newpass123", new_password2="newpass123"))
+        self.assertIn("현재 비밀번호", t)
+
+
 if __name__ == "__main__":
     unittest.main()
