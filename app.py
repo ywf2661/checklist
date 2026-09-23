@@ -1,5 +1,6 @@
 import csv
 import getpass
+import hashlib
 import io
 import os
 import re
@@ -171,7 +172,7 @@ def parse_day(value):
 
 # ---------------------------------------------------------------- 점검 항목
 
-ITEM_COLS = ("code", "title", "is_group", "owner_id", "active")
+ITEM_COLS = ("code", "title", "is_group", "owner_id", "active", "retired_on")
 
 
 def load_items(db, active_only=True):
@@ -246,7 +247,8 @@ def add_item():
         return redirect(url_for("items_page"))
     try:
         item_id = db.execute(
-            "INSERT INTO items(code, title, is_group, owner_id) VALUES(:code, :title, :is_group, :owner_id)", values
+            "INSERT INTO items(code, title, is_group, owner_id, created_on)"
+            " VALUES(:code, :title, :is_group, :owner_id, :created_on)", {**values, "created_on": today()}
         ).lastrowid
     except sqlite3.IntegrityError:
         db.rollback()
@@ -270,9 +272,17 @@ def update_item(item_id):
         flash(f"{row['code']}: {error}")
         return redirect(url_for("items_page"))
     values["active"] = int(request.form.get("active") == "1")
+    if values["is_group"] != row["is_group"] and db.execute(
+            "SELECT 1 FROM results WHERE item_id = ?", (item_id,)).fetchone():
+        flash(f"{row['code']}: 점검 기록이 있는 항목은 종류(구분/점검)를 바꿀 수 없습니다. 미사용 처리 후 새로 추가하세요.")
+        return redirect(url_for("items_page"))
+    if values["active"] != row["active"]:
+        values["retired_on"] = None if values["active"] else today()
+    else:
+        values["retired_on"] = row["retired_on"]
     try:
         db.execute("UPDATE items SET code = :code, title = :title, is_group = :is_group, owner_id = :owner_id,"
-                   " active = :active WHERE id = :id", {**values, "id": item_id})
+                   " active = :active, retired_on = :retired_on WHERE id = :id", {**values, "id": item_id})
     except sqlite3.IntegrityError:
         db.rollback()
         flash(f"이미 있는 번호 {values['code']} 입니다.")
@@ -297,7 +307,8 @@ def bulk_items():
         return redirect(url_for("items_page"))
     for values in rows:
         item_id = db.execute(
-            "INSERT INTO items(code, title, is_group, owner_id) VALUES(:code, :title, :is_group, :owner_id)", values
+            "INSERT INTO items(code, title, is_group, owner_id, created_on)"
+            " VALUES(:code, :title, :is_group, :owner_id, :created_on)", {**values, "created_on": today()}
         ).lastrowid
         audit(db, g.user["id"], "item", item_id, "add", after=values)
     db.commit()
@@ -310,7 +321,10 @@ def bulk_items():
 
 def result_token(res):
     """화면을 연 시점의 줄 상태. 저장할 때 달라졌으면 다른 사람이 먼저 손댄 것."""
-    return f"{res['status']}:{res['checker_id']}" if res else ""
+    if not res:
+        return ""
+    raw = f"{res['status']}|{res['checker_id']}|{res['issue']}|{res['remark']}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def row_badge(res):
@@ -324,9 +338,18 @@ def row_badge(res):
 app.jinja_env.globals.update(result_token=result_token, row_badge=row_badge)
 
 
+def existed(it, day):
+    """그날 점검 대상이던 항목인가(추가한 날부터 미사용 처리한 날 전까지)."""
+    if it["created_on"] and day < it["created_on"]:
+        return False
+    if not it["active"]:
+        return bool(it["retired_on"]) and day < it["retired_on"]
+    return True
+
+
 def sheet_rows(db, day):
     """그날 표의 줄(번호순). 점검 줄에는 'result'를 붙이고, 제출된 줄은 제출 당시 번호·항목명·담당자를 보여준다.
-    미사용 항목은 그날 기록이 있을 때만 나온다."""
+    그날 대상이 아닌 항목(추가 전·미사용 후)은 제출 기록이 있을 때만 나온다."""
     results = {r["item_id"]: dict(r) for r in db.execute(
         "SELECT r.*, u.name AS checker_name FROM results r JOIN users u ON u.id = r.checker_id WHERE r.date = ?",
         (day,))}
@@ -334,14 +357,14 @@ def sheet_rows(db, day):
     for it in load_items(db, active_only=False):
         res = results.get(it["id"])
         if it["is_group"]:
-            if it["active"]:
+            if existed(it, day):
                 rows.append(it)
             continue
-        if not it["active"] and res is None:
-            continue
-        it["result"] = res
         if res and res["status"] == "submitted":
             it.update(code=res["code"], title=res["title"], owner_name=res["owner_name"])
+        elif not existed(it, day):
+            continue
+        it["result"] = res
         rows.append(it)
     rows.sort(key=lambda r: code_key(r["code"]))
     return rows
@@ -364,6 +387,18 @@ def day_info(db, day):
                          LEFT JOIN users u ON u.id = d.approved_by WHERE d.date = ?""", (day,)).fetchone()
 
 
+CONFLICT = "다른 사람이 먼저 입력한 항목이 있습니다. 화면을 새로 불러왔으니 확인한 뒤 다시 저장하세요."
+
+
+def unapprove(db, day, reason):
+    """그날 확인이 되어 있으면 풀고 감사로그를 남긴다(commit은 호출한 쪽)."""
+    d = day_info(db, day)
+    if d and d["approved_by"]:
+        db.execute("UPDATE days SET approved_by = NULL, approved_at = NULL WHERE date = ?", (day,))
+        audit(db, g.user["id"], "day", None, "unapprove",
+              before={"date": day, "approved_by": d["approved_by"]}, reason=reason)
+
+
 def posted_issue(item_id):
     v = request.form.get(f"issue_{item_id}")
     return int(v) if v in ("0", "1") else None
@@ -382,7 +417,7 @@ def save_rows(db, day, action):
             continue
         res = existing.get(it["id"])
         if request.form.get(f"base_{it['id']}", "") != result_token(res):
-            return "다른 사람이 먼저 입력한 항목이 있습니다. 새로고침해서 확인한 뒤 다시 저장하세요.", None
+            return CONFLICT, None
         if res and res["status"] == "submitted":
             continue
         issue = posted_issue(it["id"])
@@ -405,15 +440,21 @@ def save_rows(db, day, action):
                               status, submitted_at) VALUES(:date, :item_id, :code, :title, :owner_name, :checker_id,
                               :issue, :remark, :status, :submitted_at)""", vals)
             else:
-                db.execute("""UPDATE results SET code = :code, title = :title, owner_name = :owner_name,
+                cur = db.execute("""UPDATE results SET code = :code, title = :title, owner_name = :owner_name,
                               checker_id = :checker_id, issue = :issue, remark = :remark, status = :status,
-                              submitted_at = :submitted_at WHERE date = :date AND item_id = :item_id""", vals)
+                              submitted_at = :submitted_at
+                              WHERE date = :date AND item_id = :item_id AND status = 'draft'""", vals)
+                if cur.rowcount == 0:  # 그 사이 다른 사람이 제출함
+                    db.rollback()
+                    return CONFLICT, None
             if submit:
                 audit(db, g.user["id"], "result", it["id"], "submit",
                       after={"date": day, "code": it["code"], "issue": issue, "remark": remark})
     except sqlite3.IntegrityError:
         db.rollback()
-        return "다른 사람이 먼저 입력한 항목이 있습니다. 새로고침해서 확인한 뒤 다시 저장하세요.", None
+        return CONFLICT, None
+    if any(c[4] for c in changes):
+        unapprove(db, day, "확인 후 새 항목 제출로 확인 해제")
     db.commit()
     if action == "save":
         return None, "임시저장했습니다."
@@ -440,11 +481,7 @@ def edit_row(db, day, item_id):
     audit(db, g.user["id"], "result", item_id, "edit",
           before={"date": day, "code": res["code"], "issue": res["issue"], "remark": res["remark"]},
           after={"date": day, "code": res["code"], "issue": issue, "remark": remark}, reason=reason)
-    d = day_info(db, day)
-    if d and d["approved_by"]:
-        db.execute("UPDATE days SET approved_by = NULL, approved_at = NULL WHERE date = ?", (day,))
-        audit(db, g.user["id"], "day", None, "unapprove",
-              before={"date": day, "approved_by": d["approved_by"]}, reason="항목 수정으로 확인 해제")
+    unapprove(db, day, "항목 수정으로 확인 해제")
     db.commit()
     return None, "수정했습니다."
 
@@ -466,8 +503,8 @@ def index():
             error, msg = save_rows(db, day, action)
         else:
             abort(400)
-        if error is None:
-            flash(msg)
+        if error is None or error == CONFLICT:
+            flash(msg or error)
             return redirect(url_for("index", day=day, view=view))
     rows = sheet_rows(db, day)
     posted = set(request.form.getlist("row")) if error else set()
@@ -506,7 +543,9 @@ def day_status(db, day):
         "missing": [r for r in rows if not submitted(r)],
         "issues": [r for r in rows if submitted(r) and r["result"]["issue"] == 1],
         "owners": [(name, done, total) for name, (done, total) in sorted(owners.items())],
-        "checkers": {r["result"]["checker_id"] for r in rows if submitted(r)},
+        "checkers": {r["result"]["checker_id"] for r in rows if submitted(r)} | {
+            r["user_id"] for r in db.execute("""SELECT user_id FROM audit_log WHERE target = 'result'
+                                                AND action = 'edit' AND json_extract(before, '$.date') = ?""", (day,))},
         "approved": day_info(db, day),
     }
 
@@ -529,7 +568,7 @@ def approve_day(day):
     elif not s["total"] or s["missing"]:
         flash("모든 점검 항목이 제출돼야 확인할 수 있습니다.")
     elif g.user["id"] in s["checkers"]:
-        flash("본인이 제출한 항목이 있는 날은 확인할 수 없습니다. 다른 팀장이나 관리자가 확인해야 합니다.")
+        flash("본인이 제출하거나 수정한 항목이 있는 날은 확인할 수 없습니다. 다른 팀장이나 관리자가 확인해야 합니다.")
     else:
         db.execute("""INSERT INTO days(date, approved_by, approved_at) VALUES(?, ?, ?)
                       ON CONFLICT(date) DO UPDATE SET approved_by = excluded.approved_by,

@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS items(
   title TEXT NOT NULL,
   is_group INTEGER NOT NULL DEFAULT 0,
   owner_id INTEGER REFERENCES users(id),
-  active INTEGER NOT NULL DEFAULT 1);
+  active INTEGER NOT NULL DEFAULT 1,
+  created_on TEXT,   -- 이 날부터 점검 대상 (NULL = 처음부터)
+  retired_on TEXT);  -- 미사용 처리한 날. 이 날부터 대상 아님
 CREATE TABLE IF NOT EXISTS results(
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
@@ -62,6 +64,11 @@ def init_db(path):
         con.close()
         raise RuntimeError("checklist.db가 이전 버전 형식입니다. 저장된 점검 기록이 없다면 파일을 지우고 다시 실행하세요.")
     con.executescript(SCHEMA)
+    cols = [r[1] for r in con.execute("PRAGMA table_info(items)")]
+    for col in ("created_on", "retired_on"):
+        if col not in cols:
+            con.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+    con.commit()
     con.close()
 
 

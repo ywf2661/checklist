@@ -78,6 +78,10 @@ class Base(unittest.TestCase):
     def text(self, r):
         return r.get_data(as_text=True)
 
+    def tok(self, item_id):
+        """지금 DB에 저장된 줄 상태의 토큰(화면을 방금 연 것과 같음)."""
+        return appmod.result_token(self.row("SELECT * FROM results WHERE date = ? AND item_id = ?", DAY, item_id))
+
 
 class SchemaTest(Base):
     def test_audit_log_is_append_only(self):
@@ -318,7 +322,7 @@ class SheetTest(Base):
         t = self.text(self.c.get("/"))
         self.assertIn('name="issue_3" value="1" checked', t)
         self.assertIn('value="점검중"', t)
-        self.assertIn('name="base_3" value="draft:1"', t)
+        self.assertIn(f'name="base_3" value="{self.tok(3)}"', t)
 
     def test_submitted_row_is_locked(self):
         self.post("/", action="submit", **form(r3=("0", "", "")))
@@ -335,10 +339,13 @@ class SheetTest(Base):
         self.post("/", action="save", **form(r3=("0", "m1", "")))
         other = appmod.app.test_client()
         self.login("m2", client=other)
-        t = self.text(self.post("/", client=other, action="save", **form(r3=("1", "m2", ""))))
+        r = self.post("/", client=other, action="save", **form(r3=("1", "m2", "")))
+        self.assertEqual(r.status_code, 302)  # 충돌 시 서버 값으로 새로 고침
+        t = self.text(other.get("/?view=all"))
         self.assertIn("먼저 입력", t)
+        self.assertIn('value="m1"', t)
         self.assertEqual(self.row("SELECT remark FROM results")["remark"], "m1")
-        self.post("/", client=other, action="submit", **form(r3=("0", "대무", "draft:1")))
+        self.post("/", client=other, action="submit", **form(r3=("0", "대무", self.tok(3))))
         self.assertEqual(self.row("SELECT checker_id FROM results")["checker_id"], 2)
 
     def test_proxy_entry_shows_checker(self):
@@ -468,6 +475,81 @@ class HistoryTest(Base):
 
     def test_reversed_range_still_works(self):
         self.assertIn("2/4", self.text(self.c.get(f"/history?start=2026-09-24&end={DAY}")))
+
+
+class ReviewFixV2Test(Base):
+    def lead(self):
+        c = appmod.app.test_client()
+        self.login("lead", client=c)
+        return c
+
+    def submit_all(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", ""), r4=("0", "", "")))
+        m2 = appmod.app.test_client()
+        self.login("m2", client=m2)
+        self.post("/", client=m2, action="submit", **form(r6=("0", "", ""), r7=("0", "", "")))
+
+    def test_kind_change_refused_when_results_exist(self):
+        self.submit_all()
+        self.post("/items/3", code="1-1-1", title="백본", is_group="1", active="1")
+        self.assertEqual(self.row("SELECT is_group FROM items WHERE id = 3")["is_group"], 0)
+        self.assertIn("기록이 있는 항목", self.text(self.c.get("/items")))
+
+    def test_new_item_not_required_on_past_days(self):
+        self.submit_all()
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.post("/items", code="1-1-3", title="지점 네트워크", is_group="0", owner_id="1")
+        self.assertNotIn("지점 네트워크", self.text(self.c.get(f"/?day={DAY}&view=all")))
+        self.post(f"/approve/{DAY}", client=self.lead())
+        self.assertEqual(self.row("SELECT approved_by FROM days")["approved_by"], 3)
+
+    def test_deactivated_item_still_required_before_retirement(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.post("/items/4", code="1-1-2", title="인터넷 방화벽,스위치 상태", is_group="0", owner_id="1")
+        self.assertIn("인터넷 방화벽", self.text(self.c.get(f"/?day={DAY}&view=all")))
+        self.assertNotIn("인터넷 방화벽", self.text(self.c.get("/?view=all")))
+
+    def test_retired_items_draft_does_not_block_approval(self):
+        self.login("m1")
+        self.post("/", action="save", **form(r4=("1", "", "")))
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        m2 = appmod.app.test_client()
+        self.login("m2", client=m2)
+        self.post("/", client=m2, action="submit", **form(r6=("0", "", ""), r7=("0", "", "")))
+        self.post("/items/4", code="1-1-2", title="인터넷 방화벽,스위치 상태", is_group="0", owner_id="1")
+        self.post(f"/approve/{DAY}", client=self.lead())
+        self.assertEqual(self.row("SELECT approved_by FROM days")["approved_by"], 3)
+
+    def test_submit_after_approval_unapproves(self):
+        self.submit_all()
+        self.post(f"/approve/{DAY}", client=self.lead())
+        self.post("/items", code="1-1-3", title="지점 네트워크", is_group="0", owner_id="1")
+        new_id = self.row("SELECT id FROM items WHERE code = '1-1-3'")["id"]
+        self.post("/", action="submit", **{"row": [str(new_id)], f"issue_{new_id}": "0",
+                                           f"remark_{new_id}": "", f"base_{new_id}": ""})
+        self.assertIsNone(self.row("SELECT approved_by FROM days")["approved_by"])
+        self.assertEqual(self.row("SELECT action FROM audit_log WHERE target = 'day' ORDER BY id DESC")["action"], "unapprove")
+
+    def test_editor_cannot_approve(self):
+        self.submit_all()
+        lead = self.lead()
+        self.post("/", client=lead, action="edit", item_id="3", reason="정정", **form(r3=("1", "재부팅", "")))
+        self.post(f"/approve/{DAY}", client=lead)
+        self.assertIsNone(self.row("SELECT * FROM days"))
+
+    def test_newer_draft_not_overwritten_by_stale_page(self):
+        self.login("m1")
+        self.post("/", action="save", **form(r3=("0", "처음", "")))
+        stale = self.tok(3)
+        self.post("/", action="save", **form(r3=("1", "나중", stale)))
+        other = appmod.app.test_client()
+        self.login("m2", client=other)
+        self.post("/", client=other, action="submit", **form(r3=("0", "대무", stale)))
+        res = self.row("SELECT * FROM results")
+        self.assertEqual((res["remark"], res["status"]), ("나중", "draft"))
 
 
 class BackupTest(Base):
