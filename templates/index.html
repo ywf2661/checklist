@@ -22,7 +22,7 @@
     {% set res = r.result %}
     {% set open = (writable and not (res and res.status == 'submitted')) or editing == r.id %}
     <tr>
-      <td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td>
+      <td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}{% if r.moved_from %}<br><small>제출 당시 구분: {{ r.moved_from }}</small>{% endif %}</td>
       <td class="nowrap">{{ r.owner_name or '-' }}{% if res and res.checker_id != r.owner_id %}<br><small>점검: {{ res.checker_name }}</small>{% endif %}</td>
       {% if open %}
       <td class="issue-pick">

@@ -202,8 +202,9 @@ def next_sort(db, parent_id):
     return db.execute("SELECT COALESCE(MAX(sort), -1) + 1 FROM items WHERE parent_id IS ?", (parent_id,)).fetchone()[0]
 
 
-def item_form(db):
-    """항목 폼 검증. (값 dict, None) 또는 (None, 오류 메시지)."""
+def item_form(db, row=None):
+    """항목 폼 검증. (값 dict, None) 또는 (None, 오류 메시지).
+    수정(row 있음)일 때 바꾸지 않은 상위 구분·담당자는 미사용이어도 그대로 둔다."""
     f = request.form
     title = f.get("title", "").strip()[:200]
     is_group = int(f.get("is_group") == "1")
@@ -211,14 +212,15 @@ def item_form(db):
     parent_id = f.get("parent_id", type=int)
     if not title:
         return None, "항목명을 입력하세요."
-    if parent_id is not None:
+    if parent_id is not None and not (row and parent_id == row["parent_id"]):
         parent = db.execute("SELECT * FROM items WHERE id = ?", (parent_id,)).fetchone()
         if parent is None or not parent["is_group"] or not parent["active"]:
             return None, "하위 항목은 사용 중인 구분 아래에만 둘 수 있습니다."
     if not is_group:
         if owner_id is None:
             return None, "점검 항목은 담당자를 지정해야 합니다."
-        if db.execute("SELECT 1 FROM users WHERE id = ? AND active = 1", (owner_id,)).fetchone() is None:
+        unchanged = row and owner_id == row["owner_id"]
+        if not unchanged and db.execute("SELECT 1 FROM users WHERE id = ? AND active = 1", (owner_id,)).fetchone() is None:
             return None, "사용 중인 사용자만 담당자로 지정할 수 있습니다."
     return {"parent_id": parent_id, "title": title, "is_group": is_group, "owner_id": owner_id}, None
 
@@ -257,9 +259,12 @@ def items_page():
     items = load_items(db, active_only=False)
     edit = request.args.get("edit", type=int)
     blocked = subtree_ids(db, edit) if edit else set()
+    groups = [i for i in items if i["is_group"] and i["active"] and i["id"] not in blocked]
+    current = next((i for i in items if i["id"] == edit), None)
+    if current and current["parent_id"] and current["parent_id"] not in {p["id"] for p in groups}:
+        groups.append(next(i for i in items if i["id"] == current["parent_id"]))
     return render_template(
-        "items.html", items=items, add=request.args.get("add"), edit=edit,
-        groups=[i for i in items if i["is_group"] and i["active"] and i["id"] not in blocked],
+        "items.html", items=items, add=request.args.get("add"), edit=edit, groups=groups,
         users=db.execute("SELECT * FROM users ORDER BY active DESC, name").fetchall())
 
 
@@ -280,6 +285,19 @@ def add_item():
     return redirect(url_for("items_page"))
 
 
+def cascade_group(db, group_id, active):
+    """구분을 미사용하면 사용 중인 하위 항목도 오늘 날짜로 미사용 처리하고, 당일 되돌리면 함께 되돌린다."""
+    for sid in subtree_ids(db, group_id) - {group_id}:
+        if active:
+            cur = db.execute("UPDATE items SET active = 1, retired_on = NULL WHERE id = ? AND active = 0 AND retired_on = ?",
+                             (sid, today()))
+        else:
+            cur = db.execute("UPDATE items SET active = 0, retired_on = ? WHERE id = ? AND active = 1", (today(), sid))
+        if cur.rowcount:
+            audit(db, g.user["id"], "item", sid, "reactivate" if active else "deactivate",
+                  reason="상위 구분 사용 여부 변경에 따름")
+
+
 @app.post("/items/<int:item_id>")
 @login_required()
 def update_item(item_id):
@@ -287,14 +305,18 @@ def update_item(item_id):
     row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:
         abort(404)
-    values, error = item_form(db)
+    values, error = item_form(db, row)
     if not error and values["parent_id"] in subtree_ids(db, item_id):
         error = "자기 자신이나 하위 항목 밑으로는 옮길 수 없습니다."
     if not error and values["is_group"] != row["is_group"]:
         if db.execute("SELECT 1 FROM results WHERE item_id = ?", (item_id,)).fetchone():
             error = "점검 기록이 있는 항목은 종류(구분/점검)를 바꿀 수 없습니다. 미사용 처리 후 새로 추가하세요."
+        elif row["created_on"] != today():
+            error = "종류(구분/점검)는 오늘 추가한 항목만 바꿀 수 있습니다. 미사용 처리 후 새로 추가하세요."
         elif db.execute("SELECT 1 FROM items WHERE parent_id = ?", (item_id,)).fetchone():
             error = "하위 항목이 있는 구분은 점검 항목으로 바꿀 수 없습니다."
+    if not error and request.form.get("active") == "1" and not row["active"] and row["retired_on"] != today():
+        error = "지난 날짜에 미사용 처리한 항목은 다시 사용할 수 없습니다(지난 기록이 바뀌기 때문). 새로 추가하세요."
     if error:
         flash(f"'{row['title']}': {error}")
         return redirect(url_for("items_page", edit=item_id))
@@ -308,6 +330,8 @@ def update_item(item_id):
                   owner_id = :owner_id, active = :active, retired_on = :retired_on WHERE id = :id""",
                {**values, "id": item_id})
     audit(db, g.user["id"], "item", item_id, "update", before={k: row[k] for k in ITEM_COLS}, after=values)
+    if row["is_group"] and values["active"] != row["active"]:
+        cascade_group(db, item_id, values["active"])
     db.commit()
     flash(f"'{values['title']}' 항목을 저장했습니다.")
     return redirect(url_for("items_page"))
@@ -391,22 +415,24 @@ def existed(it, day):
 
 def sheet_rows(db, day):
     """그날 표의 줄(트리 순서). 점검 줄에는 'result'를 붙이고, 제출된 줄은 제출 당시 항목명·담당자·구분 경로를 보여준다.
-    그날 대상이 아닌 항목(추가 전·미사용 후, 또는 상위 구분이 그런 경우)은 제출 기록이 있을 때만 나온다."""
+    그날 대상이 아닌 항목(추가 전·미사용 후)은 제출 기록이 있을 때만 나온다. 구분을 미사용하면 하위도 함께
+    미사용 처리되므로(cascade_group) 대상 여부는 항목 자신의 기간만 본다."""
     results = {r["item_id"]: dict(r) for r in db.execute(
         "SELECT r.*, u.name AS checker_name FROM results r JOIN users u ON u.id = r.checker_id WHERE r.date = ?",
         (day,))}
-    rows, alive = [], {}
+    rows = []
     for it in load_items(db, active_only=False):
-        alive[it["id"]] = existed(it, day) and (it["parent_id"] is None or alive.get(it["parent_id"], False))
         it["path_text"] = " > ".join(it["path"])
+        it["moved_from"] = None
         res = results.get(it["id"])
         if it["is_group"]:
-            if alive[it["id"]]:
-                rows.append(it)
+            rows.append(it)  # 제목줄은 keep_with_groups가 하위 줄이 있는 것만 남긴다
             continue
         if res and res["status"] == "submitted":
+            if res["path"] != it["path_text"]:
+                it["moved_from"] = res["path"]
             it.update(title=res["title"], owner_name=res["owner_name"], path_text=res["path"])
-        elif not alive[it["id"]]:
+        elif not existed(it, day):
             continue
         it["result"] = res
         rows.append(it)

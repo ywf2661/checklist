@@ -40,7 +40,7 @@
       <select name="is_group"><option value="0"{% if not i.is_group %} selected{% endif %}>점검</option><option value="1"{% if i.is_group %} selected{% endif %}>구분</option></select>
       {{ owner_select(i.owner_id) }}
       <select name="parent_id" title="상위 구분"><option value="">(맨 위)</option>
-        {% for p in groups %}<option value="{{ p.id }}"{% if p.id == i.parent_id %} selected{% endif %}>{{ '　' * p.depth }}{{ p.title }}</option>{% endfor %}</select>
+        {% for p in groups %}<option value="{{ p.id }}"{% if p.id == i.parent_id %} selected{% endif %}>{{ '　' * p.depth }}{{ p.title }}{% if not p.active %} (미사용){% endif %}</option>{% endfor %}</select>
       <label><input type="checkbox" name="active" value="1"{% if i.active %} checked{% endif %}> 사용</label>
       <button class="primary">저장</button> <a href="{{ url_for('items_page') }}">취소</a>
     </form></td></tr>

@@ -598,6 +598,73 @@ class ReviewFixTest(Base):
         self.assertEqual((res["remark"], res["status"]), ("나중", "draft"))
 
 
+class TreeReviewFixTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+
+    def lead(self):
+        c = appmod.app.test_client()
+        self.login("lead", client=c)
+        return c
+
+    def test_reactivation_only_same_day(self):
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="0", owner_id="2")
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="0", owner_id="2", active="1")
+        self.assertEqual(self.row("SELECT active FROM items WHERE id = 7")["active"], 1)  # 당일 되돌리기
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="0", owner_id="2")
+        appmod.app.config["TODAY"] = "2026-09-25"
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="0", owner_id="2", active="1")
+        self.assertEqual(self.row("SELECT active FROM items WHERE id = 7")["active"], 0)
+        self.assertIn("새로 추가", self.text(self.c.get("/items")))
+
+    def test_move_does_not_change_past_required_set(self):
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.post("/items", parent_id="1", title="신규 구분", is_group="1")
+        new = self.row("SELECT id FROM items WHERE title = '신규 구분'")["id"]
+        self.post("/items/7", parent_id=str(new), title="전화 및 녹취", is_group="0", owner_id="2", active="1")
+        self.c.get("/items")
+        self.assertIn("전화 및 녹취", self.text(self.c.get(f"/?day={DAY}&view=all")))
+        self.assertIn("미제출 <b>4</b>", self.text(self.lead().get(f"/dashboard?day={DAY}")))
+
+    def test_group_deactivation_cascades(self):
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.post("/items/2", parent_id="1", title="네트워크상태", is_group="1")
+        kids = [tuple(self.row("SELECT active, retired_on FROM items WHERE id = ?", i)) for i in (3, 4)]
+        self.assertEqual(kids, [(0, "2026-09-24"), (0, "2026-09-24")])
+        self.assertIn("미제출 <b>4</b>", self.text(self.lead().get(f"/dashboard?day={DAY}")))
+        self.assertIn("미제출 <b>2</b>", self.text(self.lead().get("/dashboard")))
+
+    def test_kind_change_only_for_items_added_today(self):
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="1", active="1")
+        self.assertEqual(self.row("SELECT is_group FROM items WHERE id = 7")["is_group"], 0)
+        self.post("/items", parent_id="1", title="오늘 추가", is_group="0", owner_id="1")
+        new = self.row("SELECT id FROM items WHERE title = '오늘 추가'")["id"]
+        self.post(f"/items/{new}", parent_id="1", title="오늘 추가", is_group="1", active="1")
+        self.assertEqual(self.row("SELECT is_group FROM items WHERE id = ?", new)["is_group"], 1)
+
+    def test_edit_under_inactive_group_keeps_parent(self):
+        self.post("/items/5", parent_id="1", title="시스템 및 업무 서비스", is_group="1")
+        self.assertIn('<option value="5" selected>', self.text(self.c.get("/items?edit=6")))
+        self.post("/items/6", parent_id="5", title="시각동기화", is_group="0", owner_id="2")
+        it = self.row("SELECT * FROM items WHERE id = 6")
+        self.assertEqual((it["parent_id"], it["title"]), (5, "시각동기화"))
+
+    def test_item_with_inactive_owner_can_be_retired(self):
+        self.exec("UPDATE users SET active = 0 WHERE id = 2")
+        self.post("/items/7", parent_id="1", title="전화 및 녹취", is_group="0", owner_id="2")
+        self.assertEqual(self.row("SELECT active FROM items WHERE id = 7")["active"], 0)
+
+    def test_moved_submitted_row_shows_snapshot_path(self):
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.post("/items/3", parent_id="5", title="백본 및 각 층 네트워크 상태", is_group="0", owner_id="1", active="1")
+        t = self.text(self.c.get(f"/?day={DAY}&view=all"))
+        self.assertIn("제출 당시 구분: 네트워크 및 시스템 점검 &gt; 네트워크상태", t)
+        t = self.text(self.c.get(f"/history?start={DAY}&format=print"))
+        self.assertIn("제출 당시 구분: 네트워크 및 시스템 점검 &gt; 네트워크상태", t)
+
+
 class HistoryTest(Base):
     def setUp(self):
         super().setUp()

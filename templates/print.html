@@ -13,7 +13,7 @@
     <tr class="group"><td colspan="5" style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td></tr>
     {% else %}
     {% set res = r.result if (r.result and r.result.status == 'submitted') else None %}
-    <tr><td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}</td>
+    <tr><td style="padding-left: {{ '%.1f'|format(0.9 + r.depth * 1.4) }}rem">{{ r.title }}{% if r.moved_from %}<br><small>제출 당시 구분: {{ r.moved_from }}</small>{% endif %}</td>
       <td class="nowrap">{{ r.owner_name or '-' }}</td><td class="nowrap">{{ res.checker_name if res else '' }}</td>
       <td class="nowrap">{% if res %}{{ '유' if res.issue else '무' }}{% else %}미제출{% endif %}</td>
       <td class="remark">{{ res.remark if res else '' }}</td></tr>
