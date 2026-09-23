@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+{% set writable = day == today and (not check or check.status == 'draft') %}
+<h1>{{ system.name }} 점검표 <small>{{ day }}</small></h1>
+<p>상태: <b{% if check and check.has_issue %} class="issue"{% endif %}>{{ status_label(check.status if check else None, check.has_issue if check else 0) }}</b>
+{% if check %} · 점검자: {{ names[check.user_id] }}{% if check.submitted_at %} · 제출: {{ check.submitted_at }}{% endif %}{% endif %}</p>
+{% if error %}<p class="flash">{{ error }}</p>{% endif %}
+<form method="post" class="sheet">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <table>
+    <tr><th class="chk">체크</th><th>점검 항목</th></tr>
+    {% for it in items %}
+    <tr>
+      <td class="chk"><input type="checkbox" id="i{{ it.item_id }}" name="item" value="{{ it.item_id }}"{% if it.checked %} checked{% endif %}{% if not writable %} disabled{% endif %}></td>
+      <td><label for="i{{ it.item_id }}">{{ it.item_text }}</label></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">점검 항목이 없습니다.</td></tr>
+    {% endfor %}
+  </table>
+  <h2>비고</h2>
+  <textarea name="remark"{% if not writable %} readonly{% endif %}>{{ remark }}</textarea>
+  {% if writable %}
+  <p><button name="action" value="save">임시저장</button> <button name="action" value="submit">제출</button></p>
+  {% endif %}
+</form>
+{% endblock %}

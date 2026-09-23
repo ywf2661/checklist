@@ -134,5 +134,66 @@ class AuthTest(Base):
         self.assertIn("현재 비밀번호", t)
 
 
+class SheetTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+
+    def test_index_lists_systems_with_status(self):
+        t = self.text(self.c.get("/"))
+        self.assertIn("주문서버", t)
+        self.assertIn("미점검", t)
+
+    def test_save_draft_then_submit(self):
+        self.post(URL, action="save", item=["1"])
+        self.assertEqual(self.row("SELECT status FROM checks")["status"], "draft")
+        self.assertIn('value="1" checked', self.text(self.c.get(URL)))
+        self.post(URL, action="submit", item=["1", "2"])
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["status"], c["has_issue"], c["user_id"]), ("submitted", 0, 1))
+        self.assertEqual(self.row("SELECT action FROM audit_log")["action"], "submit")
+
+    def test_unchecked_item_requires_remark(self):
+        t = self.text(self.post(URL, action="submit", item=["1"]))
+        self.assertIn("비고를 입력", t)
+        self.assertIsNone(self.row("SELECT * FROM checks"))
+        self.post(URL, action="submit", item=["1"], remark="배치 재처리중")
+        self.assertEqual(self.row("SELECT has_issue FROM checks")["has_issue"], 1)
+
+    def test_error_keeps_posted_input(self):
+        t = self.text(self.post(URL, action="submit", item=["2"], remark=""))
+        self.assertIn('value="2" checked', t)
+
+    def test_cannot_write_other_day(self):
+        for day in ("2026-09-22", "2026-09-24"):
+            t = self.text(self.post(f"/check/1/{day}", action="save", item=["1"]))
+            self.assertIn("오늘 점검만", t)
+        self.assertIsNone(self.row("SELECT * FROM checks"))
+
+    def test_second_submit_rejected(self):
+        self.post(URL, action="submit", item=["1", "2"])
+        other = appmod.app.test_client()
+        self.login("m2", client=other)
+        t = self.text(self.post(URL, client=other, action="submit", item=["1"], remark="x"))
+        self.assertIn("먼저 제출", t)
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["user_id"], c["has_issue"]), (1, 0))
+
+    def test_system_without_items_cannot_submit(self):
+        t = self.text(self.post(f"/check/2/{DAY}", action="submit"))
+        self.assertIn("점검 항목이 없습니다", t)
+        self.assertIsNone(self.row("SELECT * FROM checks"))
+
+    def test_submitted_sheet_keeps_item_text(self):
+        self.post(URL, action="submit", item=["1", "2"])
+        self.exec("UPDATE items SET text = '바뀐 문구' WHERE id = 1")
+        t = self.text(self.c.get(URL))
+        self.assertIn("프로세스 기동 확인", t)
+        self.assertNotIn("바뀐 문구", t)
+
+    def test_bad_date_rejected(self):
+        self.assertEqual(self.c.get("/check/1/abc").status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
