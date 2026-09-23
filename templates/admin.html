@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token() }}">{% endmacro %}
+<h1>관리</h1>
+
+<h2>사용자</h2>
+<table>
+  <tr><th>ID</th><th>이름</th><th>역할</th><th>상태</th><th>작업</th></tr>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.login_id }}</td>
+    <td>{{ u.name }}</td>
+    <td><form method="post" action="{{ url_for('admin_update_user', user_id=u.id) }}" class="inline">{{ csrf() }}
+      <select name="role">{% for k, v in roles.items() %}<option value="{{ k }}"{% if k == u.role %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+      <button name="action" value="role" class="small">변경</button></form></td>
+    <td>{% if not u.active %}<span class="badge st-none">미사용</span>{% elif u.fail_count >= max_fail %}<span class="badge st-issue">잠김</span>{% else %}<span class="badge st-approved">정상</span>{% endif %}</td>
+    <td><form method="post" action="{{ url_for('admin_update_user', user_id=u.id) }}" class="inline">{{ csrf() }}
+      <input name="password" type="password" placeholder="새 임시 비밀번호" size="14">
+      <button name="action" value="reset_pw" class="small">비밀번호 초기화</button>
+      <button name="action" value="unlock" class="small">잠금 해제</button>
+      {% if u.active %}<button name="action" value="deactivate" class="small">미사용</button>{% else %}<button name="action" value="activate" class="small">사용</button>{% endif %}
+    </form></td>
+  </tr>
+  {% endfor %}
+</table>
+<form method="post" action="{{ url_for('admin_add_user') }}" class="toolbar">{{ csrf() }}
+  <input name="login_id" placeholder="ID" required>
+  <input name="name" placeholder="이름" required>
+  <select name="role">{% for k, v in roles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+  <input name="password" type="password" placeholder="임시 비밀번호(8자 이상)" minlength="8" required>
+  <button class="primary">사용자 추가</button>
+</form>
+
+<h2>시스템</h2>
+<table>
+  <tr><th>이름</th><th>담당자</th><th>순서</th><th>사용</th><th></th></tr>
+  {% for s in systems %}
+  <tr>
+    <td><input form="sys{{ s.id }}" name="name" value="{{ s.name }}" required></td>
+    <td><select form="sys{{ s.id }}" name="owner_id"><option value="">-</option>
+      {% for u in users if u.active %}<option value="{{ u.id }}"{% if u.id == s.owner_id %} selected{% endif %}>{{ u.name }}</option>{% endfor %}</select></td>
+    <td><input form="sys{{ s.id }}" name="sort" type="number" value="{{ s.sort }}" style="width:4rem"></td>
+    <td><input form="sys{{ s.id }}" name="active" type="checkbox" value="1"{% if s.active %} checked{% endif %}></td>
+    <td><form id="sys{{ s.id }}" method="post" action="{{ url_for('admin_update_system', system_id=s.id) }}">{{ csrf() }}<button>저장</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+<form method="post" action="{{ url_for('admin_add_system') }}" class="toolbar">{{ csrf() }}
+  <input name="name" placeholder="시스템 이름" required>
+  <select name="owner_id"><option value="">담당자 없음</option>
+    {% for u in users if u.active %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+  <input name="sort" type="number" value="0" style="width:4rem">
+  <input type="hidden" name="active" value="1">
+  <button class="primary">시스템 추가</button>
+</form>
+
+<h2>점검 항목</h2>
+<p><small>항목 추가는 각 점검표 화면에서 합니다. 여기서는 순서와 사용 여부만 바꿉니다.</small></p>
+<table>
+  <tr><th>시스템</th><th>항목</th><th>순서</th><th>사용</th><th></th></tr>
+  {% for i in items %}
+  <tr>
+    <td>{{ i.system_name }}</td>
+    <td>{{ i.text }}</td>
+    <td><input form="item{{ i.id }}" name="sort" type="number" value="{{ i.sort }}" style="width:4rem"></td>
+    <td><input form="item{{ i.id }}" name="active" type="checkbox" value="1"{% if i.active %} checked{% endif %}></td>
+    <td><form id="item{{ i.id }}" method="post" action="{{ url_for('admin_update_item', item_id=i.id) }}">{{ csrf() }}<button>저장</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

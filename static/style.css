@@ -1,0 +1,116 @@
+/* 네이비 금융형 — 외부 폰트·프레임워크 없이 순수 CSS */
+:root {
+  --navy: #14284b;
+  --navy-2: #1f3a68;
+  --accent: #2f6fdb;
+  --bg: #f2f4f8;
+  --card: #fff;
+  --line: #e3e7ee;
+  --text: #1c2433;
+  --muted: #6b7486;
+  --red: #d63b3b;
+  --green: #1f9d63;
+  --yellow: #d99a00;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(20, 40, 75, .06), 0 4px 14px rgba(20, 40, 75, .06);
+}
+* { box-sizing: border-box; }
+body { font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; margin: 0;
+       background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 1.5rem; margin: .5rem 0 1rem; color: var(--navy); }
+h1 small { font-size: .95rem; font-weight: normal; color: var(--muted); margin-left: .4rem; }
+h2 { font-size: 1.1rem; margin: 1.6rem 0 .6rem; color: var(--navy); }
+small { color: var(--muted); }
+
+/* 상단바 */
+nav { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; align-items: center; padding: .7rem 1.5rem;
+      background: linear-gradient(90deg, var(--navy), var(--navy-2)); box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+nav a, nav span { color: #dbe4f5; font-size: .95rem; }
+nav a:hover { color: #fff; text-decoration: none; }
+nav .brand { color: #fff; font-weight: bold; font-size: 1.05rem; margin-right: .8rem; }
+nav .spacer { flex: 1; }
+nav .me { color: #fff; font-weight: bold; }
+nav button { background: transparent; border: 1px solid rgba(255,255,255,.5); color: #fff; padding: .25rem .7rem; }
+nav button:hover { background: rgba(255,255,255,.12); }
+
+main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1.2rem 3rem; }
+
+/* 표 = 카드 */
+table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--card);
+        border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 1.2rem; }
+th, td { padding: .7rem .9rem; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
+th { background: #f7f9fc; color: var(--muted); font-size: .85rem; font-weight: bold; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td, table tr:hover td { background: #fafbfe; }
+.mine td { background: #f0f5ff; }
+.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 카드·알림 */
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.2rem 1.4rem; margin-bottom: 1.2rem; }
+.flash { background: #fff8e6; border: 1px solid #f1d38a; border-left: 4px solid var(--yellow);
+         padding: .7rem 1rem; border-radius: 6px; margin: 0 0 1rem; }
+.issue { color: var(--red); font-weight: bold; }
+.remark { white-space: pre-wrap; }
+.inline { display: inline; }
+
+/* 상태 배지 */
+.badge { display: inline-block; padding: .15rem .65rem; border-radius: 999px; font-size: .82rem; font-weight: bold; white-space: nowrap; }
+.st-none { background: #eceef2; color: #6b7486; }
+.st-draft { background: #fff3cd; color: #946200; }
+.st-submitted { background: #e3edff; color: #1f55b8; }
+.st-issue { background: #fde6e6; color: #b42525; }
+.st-approved { background: #dff5ea; color: #157347; }
+
+/* 입력·버튼 */
+input, select, textarea, button { font: inherit; }
+input:not([type=checkbox]), select, textarea { border: 1px solid #cfd6e2; border-radius: 6px; padding: .45rem .6rem; background: #fff; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,111,219,.15); }
+textarea { width: 100%; min-height: 6rem; }
+button { border: 1px solid #cfd6e2; background: #fff; color: var(--text); border-radius: 6px; padding: .45rem 1rem; cursor: pointer; }
+button:hover { background: #f3f6fb; }
+button.primary { background: var(--navy); border-color: var(--navy); color: #fff; font-weight: bold; }
+button.primary:hover { background: var(--navy-2); }
+button.small { padding: .2rem .6rem; font-size: .82rem; color: var(--muted); }
+.toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; background: var(--card);
+           padding: .8rem 1rem; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 1.2rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: 1rem; }
+
+/* 점검표 */
+.status-line { color: var(--muted); margin: -.4rem 0 1rem; }
+.sheet td.chk, .sheet th.chk { width: 3.5rem; text-align: center; }
+.sheet input[type=checkbox] { width: 1.35rem; height: 1.35rem; accent-color: var(--navy); cursor: pointer; }
+.sheet label { display: block; cursor: pointer; }
+.sheet tr:has(input:checked) td { background: #f1f8f4; }
+.add-item { margin-top: 1.5rem; padding: 1rem 1.2rem; background: var(--card); border: 1px dashed #b8c2d3; border-radius: var(--radius); }
+.add-item small { display: block; margin-top: .4rem; }
+
+/* 현황판 요약 타일: "미점검 <b>1</b>" 을 숫자 위·글자 아래로 */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.2rem; }
+.tile { display: flex; flex-direction: column-reverse; background: var(--card); border-radius: var(--radius);
+        box-shadow: var(--shadow); padding: 1rem 1.2rem; color: var(--muted); font-size: .9rem; border-top: 4px solid var(--navy); }
+.tile b { font-size: 2rem; color: var(--navy); line-height: 1.1; }
+.tile.t-missing { border-top-color: #9aa3b5; }
+.tile.t-issue { border-top-color: var(--red); }
+.tile.t-issue b { color: var(--red); }
+.tile.t-waiting { border-top-color: var(--accent); }
+
+/* 로그인·비밀번호 */
+.narrow { max-width: 380px; margin: 3rem auto; }
+.narrow h1 { text-align: center; }
+.narrow label { display: block; font-size: .9rem; color: var(--muted); }
+.narrow input { width: 100%; margin-top: .25rem; }
+.narrow button.primary { width: 100%; padding: .65rem; margin-top: .5rem; }
+.logo { text-align: center; font-size: 2.2rem; color: var(--navy); margin-bottom: -.5rem; }
+
+/* 인쇄: 흑백 문서 모양 */
+.page { page-break-after: always; margin-bottom: 2rem; }
+@media print {
+  .no-print, nav { display: none !important; }
+  body { background: #fff; font-size: 12pt; }
+  main { max-width: none; padding: 0; }
+  table { box-shadow: none; border-radius: 0; border-collapse: collapse; }
+  th, td { border: 1px solid #555; background: #fff !important; color: #000; }
+  .badge { background: none !important; color: #000 !important; padding: 0; }
+}

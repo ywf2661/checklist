@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>현황판</h1>
+<form method="get" class="no-print toolbar">
+  <label>날짜 <input type="date" name="day" value="{{ day }}"></label> <button class="primary">조회</button>
+</form>
+<div class="tiles">
+  <div class="tile">전체 시스템 <b>{{ rows|length }}</b></div>
+  <div class="tile t-missing">미점검 <b>{{ missing }}</b></div>
+  <div class="tile t-issue">이상 <b>{{ issues }}</b></div>
+  <div class="tile t-waiting">확인 대기 <b>{{ waiting }}</b></div>
+</div>
+<table>
+  <tr><th>시스템</th><th>담당자</th><th>점검자</th><th>제출 시각</th><th>상태</th><th class="no-print">확인</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('check_sheet', system_id=r.system_id, day=day) }}">{{ r.name }}</a></td>
+    <td>{{ r.owner_name or '-' }}</td>
+    <td>{{ r.checker_name or '-' }}</td>
+    <td>{{ r.submitted_at|dt }}</td>
+    <td><span class="badge {{ status_class(r.status, r.has_issue) }}">{{ status_label(r.status, r.has_issue) }}</span></td>
+    <td class="no-print">{% if r.status == 'submitted' and r.checker_id != g.user.id %}
+      <form method="post" action="{{ url_for('approve', check_id=r.check_id) }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="primary">확인</button>
+      </form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
