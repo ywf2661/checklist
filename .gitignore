@@ -1,0 +1,7 @@
+__pycache__/
+venv/
+wheels/
+backup/
+checklist.db
+secret.key
+.superpowers/
