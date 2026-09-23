@@ -306,5 +306,63 @@ class HistoryTest(Base):
         self.assertIn("주문서버", t)
 
 
+class AdminTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("adm")
+
+    def test_non_admin_forbidden(self):
+        lead = appmod.app.test_client()
+        self.login("lead", client=lead)
+        self.assertEqual(lead.get("/admin").status_code, 403)
+
+    def test_add_user_must_change_password(self):
+        self.post("/admin/users", login_id="new1", name="신입", role="member", password="temp12345")
+        u = self.row("SELECT * FROM users WHERE login_id = 'new1'")
+        self.assertEqual((u["role"], u["must_change_pw"]), ("member", 1))
+        self.assertEqual(self.row("SELECT action FROM audit_log WHERE target = 'user'")["action"], "add")
+
+    def test_duplicate_login_id_rejected(self):
+        self.post("/admin/users", login_id="m1", name="중복", role="member", password="temp12345")
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM users WHERE login_id = 'm1'")["n"], 1)
+        self.assertIn("이미 있는 ID", self.text(self.c.get("/admin")))
+
+    def test_deactivated_user_session_is_blocked(self):
+        m1 = appmod.app.test_client()
+        self.login("m1", client=m1)
+        self.assertEqual(m1.get("/").status_code, 200)
+        self.post("/admin/users/1", action="deactivate")
+        r = m1.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/login", r.headers["Location"])
+
+    def test_admin_cannot_deactivate_or_demote_self(self):
+        self.post("/admin/users/4", action="deactivate")
+        self.post("/admin/users/4", action="role", role="member")
+        u = self.row("SELECT * FROM users WHERE id = 4")
+        self.assertEqual((u["active"], u["role"]), (1, "admin"))
+
+    def test_unlock_and_reset_password(self):
+        self.exec("UPDATE users SET fail_count = 5 WHERE id = 1")
+        self.post("/admin/users/1", action="unlock")
+        self.assertEqual(self.login("m1", client=appmod.app.test_client()).status_code, 302)
+        self.post("/admin/users/1", action="reset_pw", password="reset12345")
+        u = self.row("SELECT * FROM users WHERE id = 1")
+        self.assertEqual(u["must_change_pw"], 1)
+        a = self.row("SELECT * FROM audit_log WHERE action = 'reset_pw'")
+        self.assertNotIn("pw_hash", a["before"] + a["after"])
+
+    def test_system_add_update_and_item_sort(self):
+        self.post("/admin/systems", name="원장서버", owner_id="2", sort="3", active="1")
+        s = self.row("SELECT * FROM systems WHERE name = '원장서버'")
+        self.assertEqual((s["owner_id"], s["sort"], s["active"]), (2, 3, 1))
+        self.post(f"/admin/systems/{s['id']}", name="원장서버A", owner_id="", sort="3")
+        s = self.row("SELECT * FROM systems WHERE id = ?", s["id"])
+        self.assertEqual((s["name"], s["owner_id"], s["active"]), ("원장서버A", None, 0))
+        self.post("/admin/items/2", sort="0", active="1")
+        self.assertEqual(self.row("SELECT sort FROM items WHERE id = 2")["sort"], 0)
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM audit_log WHERE target = 'system'")["n"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

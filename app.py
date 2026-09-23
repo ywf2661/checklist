@@ -448,6 +448,145 @@ def history():
                            system_id=system_id, systems=systems)
 
 
+USER_AUDIT_COLS = ("login_id", "name", "role", "active", "fail_count")
+
+
+def user_view(db, user_id):
+    """감사로그용 사용자 정보(비밀번호 해시 제외)."""
+    row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None:
+        abort(404)
+    return {k: row[k] for k in USER_AUDIT_COLS}
+
+
+def system_form():
+    f = request.form
+    return {"name": f.get("name", "").strip(), "owner_id": f.get("owner_id", type=int),
+            "sort": f.get("sort", 0, type=int), "active": int(f.get("active") == "1")}
+
+
+@app.route("/admin")
+@login_required("admin")
+def admin():
+    db = get_db()
+    return render_template(
+        "admin.html", roles=ROLE_NAMES, max_fail=MAX_FAIL,
+        users=db.execute("SELECT * FROM users ORDER BY active DESC, name").fetchall(),
+        systems=db.execute("SELECT * FROM systems ORDER BY active DESC, sort, name").fetchall(),
+        items=db.execute("""SELECT i.*, s.name AS system_name FROM items i JOIN systems s ON s.id = i.system_id
+                            ORDER BY s.sort, s.name, i.sort, i.id""").fetchall(),
+    )
+
+
+@app.post("/admin/users")
+@login_required("admin")
+def admin_add_user():
+    f = request.form
+    login_id, name, role, pw = f.get("login_id", "").strip(), f.get("name", "").strip(), f.get("role"), f.get("password", "")
+    if not login_id or not name or role not in ROLE_NAMES or len(pw) < 8:
+        flash("ID, 이름, 역할, 8자 이상 임시 비밀번호를 입력하세요.")
+        return redirect(url_for("admin"))
+    db = get_db()
+    try:
+        user_id = db.execute(
+            "INSERT INTO users(login_id, name, pw_hash, role) VALUES(?, ?, ?, ?)",
+            (login_id, name, generate_password_hash(pw), role),
+        ).lastrowid
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash("이미 있는 ID입니다.")
+        return redirect(url_for("admin"))
+    audit(db, g.user["id"], "user", user_id, "add", after=user_view(db, user_id))
+    db.commit()
+    flash(f"{name} 사용자를 추가했습니다. 첫 로그인 때 비밀번호를 바꿔야 합니다.")
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/users/<int:user_id>")
+@login_required("admin")
+def admin_update_user(user_id):
+    db = get_db()
+    action = request.form.get("action")
+    before = user_view(db, user_id)
+    if user_id == g.user["id"] and action in ("role", "deactivate"):
+        flash("본인 계정의 역할이나 사용 여부는 바꿀 수 없습니다.")
+        return redirect(url_for("admin"))
+    if action == "role":
+        role = request.form.get("role")
+        if role not in ROLE_NAMES:
+            abort(400)
+        db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    elif action == "reset_pw":
+        pw = request.form.get("password", "")
+        if len(pw) < 8:
+            flash("임시 비밀번호는 8자 이상이어야 합니다.")
+            return redirect(url_for("admin"))
+        db.execute("UPDATE users SET pw_hash = ?, must_change_pw = 1, fail_count = 0 WHERE id = ?",
+                   (generate_password_hash(pw), user_id))
+    elif action == "unlock":
+        db.execute("UPDATE users SET fail_count = 0 WHERE id = ?", (user_id,))
+    elif action in ("deactivate", "activate"):
+        db.execute("UPDATE users SET active = ? WHERE id = ?", (int(action == "activate"), user_id))
+    else:
+        abort(400)
+    audit(db, g.user["id"], "user", user_id, action, before=before, after=user_view(db, user_id))
+    db.commit()
+    flash("저장했습니다.")
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/systems")
+@login_required("admin")
+def admin_add_system():
+    s = system_form()
+    if not s["name"]:
+        flash("시스템 이름을 입력하세요.")
+        return redirect(url_for("admin"))
+    db = get_db()
+    system_id = db.execute(
+        "INSERT INTO systems(name, owner_id, sort, active) VALUES(:name, :owner_id, :sort, :active)", s
+    ).lastrowid
+    audit(db, g.user["id"], "system", system_id, "add", after=s)
+    db.commit()
+    flash("시스템을 추가했습니다.")
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/systems/<int:system_id>")
+@login_required("admin")
+def admin_update_system(system_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM systems WHERE id = ?", (system_id,)).fetchone()
+    if row is None:
+        abort(404)
+    s = system_form()
+    if not s["name"]:
+        flash("시스템 이름을 입력하세요.")
+        return redirect(url_for("admin"))
+    db.execute("UPDATE systems SET name = :name, owner_id = :owner_id, sort = :sort, active = :active WHERE id = :id",
+               {**s, "id": system_id})
+    audit(db, g.user["id"], "system", system_id, "update", before={k: row[k] for k in s}, after=s)
+    db.commit()
+    flash("저장했습니다.")
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/items/<int:item_id>")
+@login_required("admin")
+def admin_update_item(item_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        abort(404)
+    after = {"sort": request.form.get("sort", 0, type=int), "active": int(request.form.get("active") == "1")}
+    db.execute("UPDATE items SET sort = :sort, active = :active WHERE id = :id", {**after, "id": item_id})
+    audit(db, g.user["id"], "item", item_id, "update",
+          before={"sort": row["sort"], "active": row["active"]}, after=after)
+    db.commit()
+    flash("저장했습니다.")
+    return redirect(url_for("admin"))
+
+
 def main(argv):
     dbm.init_db(app.config["DATABASE"])
     if argv[:1] == ["init-admin"]:
