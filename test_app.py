@@ -228,5 +228,52 @@ class ItemTest(Base):
         self.assertNotIn("배치 완료 확인", self.text(self.c.get("/check/1/2026-09-24")))
 
 
+class ReviewTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+        self.post(URL, action="submit", item=["1", "2"])
+
+    def test_edit_requires_reason(self):
+        t = self.text(self.post(URL, action="edit", item=["1"], remark="재기동"))
+        self.assertIn("수정 사유를 입력하세요", t)
+        self.assertEqual(self.row("SELECT remark FROM checks")["remark"], "")
+
+    def test_edit_logs_before_and_after(self):
+        self.post(URL, action="edit", item=["1"], remark="재기동함", reason="체크 누락 정정")
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["has_issue"], c["remark"], c["status"]), (1, "재기동함", "submitted"))
+        a = self.row("SELECT * FROM audit_log WHERE action = 'edit'")
+        self.assertEqual(a["reason"], "체크 누락 정정")
+        self.assertEqual(json.loads(a["before"])["items"][1], ["배치 완료 확인", 1])
+        self.assertEqual(json.loads(a["after"])["items"][1], ["배치 완료 확인", 0])
+
+    def test_edit_mode_shows_reason_field(self):
+        self.assertIn('name="reason"', self.text(self.c.get(URL + "?edit=1")))
+
+    def test_member_cannot_approve(self):
+        self.assertEqual(self.post("/approve/1").status_code, 403)
+
+    def test_approve_then_edit_requires_reapproval(self):
+        lead = appmod.app.test_client()
+        self.login("lead", client=lead)
+        self.post("/approve/1", client=lead)
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["status"], c["approved_by"]), ("approved", 3))
+        self.post(URL, action="edit", item=["1", "2"], remark="메모", reason="비고 추가")
+        c = self.row("SELECT * FROM checks")
+        self.assertEqual((c["status"], c["approved_by"], c["approved_at"]), ("submitted", None, None))
+
+    def test_dashboard(self):
+        self.assertEqual(self.c.get("/dashboard").status_code, 403)
+        lead = appmod.app.test_client()
+        self.login("lead", client=lead)
+        t = self.text(lead.get("/dashboard"))
+        self.assertIn("주문서버", t)
+        self.assertIn("빈시스템", t)
+        self.assertIn("미점검 <b>1</b>", t)
+        self.assertIn("확인 대기 <b>1</b>", t)
+
+
 if __name__ == "__main__":
     unittest.main()

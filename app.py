@@ -211,9 +211,34 @@ def apply_form(items):
     return request.form.get("remark", "").strip(), int(any(not it["checked"] for it in items))
 
 
+def edit_sheet(db, check, items):
+    """제출(또는 확인)된 점검을 사유와 함께 수정. 확인은 풀리고 이력이 남는다."""
+    if check is None or check["status"] == "draft":
+        return "제출된 점검만 수정할 수 있습니다."
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        return "수정 사유를 입력하세요."
+    before = snapshot(check["remark"], items)
+    remark, has_issue = apply_form(items)
+    if has_issue and not remark:
+        return "체크하지 않은 항목이 있으면 비고를 입력해야 합니다."
+    db.execute(
+        "UPDATE checks SET remark = ?, has_issue = ?, status = 'submitted', approved_by = NULL, approved_at = NULL"
+        " WHERE id = ?",
+        (remark, has_issue, check["id"]),
+    )
+    write_items(db, check["id"], items)
+    audit(db, g.user["id"], "check", check["id"], "edit",
+          before=before, after=snapshot(remark, items), reason=reason)
+    db.commit()
+    return None
+
+
 def save_sheet(db, system_id, day, check, items):
     """폼 내용을 저장한다. 성공하면 None, 실패하면 오류 메시지를 돌려준다."""
     action = request.form.get("action")
+    if action == "edit":
+        return edit_sheet(db, check, items)
     if action not in ("save", "submit"):
         abort(400)
     if day != today():
@@ -276,9 +301,11 @@ def check_sheet(system_id, day):
             flash(SAVED_MESSAGES[request.form["action"]])
             return redirect(url_for("check_sheet", system_id=system_id, day=day))
         remark = request.form.get("remark", "")
+    editing = bool(check and check["status"] != "draft"
+                   and (request.args.get("edit") == "1" or request.form.get("action") == "edit"))
     names = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM users")}
     return render_template("sheet.html", system=system, day=day, today=today(), check=check,
-                           items=items, remark=remark, error=error, names=names, editing=False)
+                           items=items, remark=remark, error=error, names=names, editing=editing)
 
 
 @app.post("/system/<int:system_id>/items")
@@ -314,6 +341,49 @@ def deactivate_item(item_id):
     db.commit()
     flash("점검 항목을 미사용 처리했습니다. 필요하면 관리자가 다시 사용으로 바꿀 수 있습니다.")
     return redirect(url_for("check_sheet", system_id=item["system_id"], day=today()))
+
+
+@app.post("/approve/<int:check_id>")
+@login_required("leader")
+def approve(check_id):
+    db = get_db()
+    check = db.execute("SELECT * FROM checks WHERE id = ?", (check_id,)).fetchone()
+    if check is None:
+        abort(404)
+    cur = db.execute(
+        "UPDATE checks SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ? AND status = 'submitted'",
+        (g.user["id"], now(), check_id),
+    )
+    if cur.rowcount:
+        audit(db, g.user["id"], "check", check_id, "approve")
+        db.commit()
+        flash("확인 처리했습니다.")
+    else:
+        flash("제출 상태인 점검만 확인할 수 있습니다.")
+    return redirect(url_for("dashboard", day=check["date"]))
+
+
+@app.route("/dashboard")
+@login_required("leader")
+def dashboard():
+    day = parse_day(request.args.get("day") or today())
+    rows = get_db().execute(
+        """SELECT s.id AS system_id, s.name, o.name AS owner_name, c.id AS check_id, c.status,
+                  c.has_issue, u.name AS checker_name, c.submitted_at
+           FROM systems s
+           LEFT JOIN users o ON o.id = s.owner_id
+           LEFT JOIN checks c ON c.system_id = s.id AND c.date = ?
+           LEFT JOIN users u ON u.id = c.user_id
+           WHERE s.active = 1 OR c.id IS NOT NULL
+           ORDER BY s.sort, s.name""",
+        (day,),
+    ).fetchall()
+    return render_template(
+        "dashboard.html", day=day, rows=rows,
+        missing=sum(r["status"] is None for r in rows),
+        issues=sum(bool(r["has_issue"]) for r in rows),
+        waiting=sum(r["status"] == "submitted" for r in rows),
+    )
 
 
 def main(argv):
