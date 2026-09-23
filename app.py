@@ -587,6 +587,16 @@ def admin_update_item(item_id):
     return redirect(url_for("admin"))
 
 
+def backup(out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    dest = os.path.join(out_dir, f"checklist-{datetime.now():%Y%m%d-%H%M%S}.db")
+    src, dst = sqlite3.connect(app.config["DATABASE"]), sqlite3.connect(dest)
+    src.backup(dst)
+    src.close()
+    dst.close()
+    return dest
+
+
 def main(argv):
     dbm.init_db(app.config["DATABASE"])
     if argv[:1] == ["init-admin"]:
@@ -603,6 +613,8 @@ def main(argv):
             )
         con.close()
         print("관리자를 만들었습니다. 첫 로그인 때 비밀번호를 바꿔야 합니다.")
+    elif argv[:1] == ["backup"]:
+        print(backup(argv[1] if len(argv) > 1 else os.path.join(BASE, "backup")))
     else:
         from waitress import serve
         host = os.environ.get("CHECKLIST_HOST", "0.0.0.0")

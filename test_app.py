@@ -364,5 +364,14 @@ class AdminTest(Base):
         self.assertEqual(self.row("SELECT COUNT(*) AS n FROM audit_log WHERE target = 'system'")["n"], 2)
 
 
+class BackupTest(Base):
+    def test_backup_creates_consistent_copy(self):
+        out = tempfile.mkdtemp()
+        path = appmod.backup(out)
+        con = sqlite3.connect(path)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM users").fetchone()[0], 4)
+        con.close()
+
+
 if __name__ == "__main__":
     unittest.main()
