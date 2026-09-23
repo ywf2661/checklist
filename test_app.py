@@ -379,6 +379,65 @@ class SheetTest(Base):
         self.assertEqual(self.c.get("/?day=abc").status_code, 400)
 
 
+class DashboardTest(Base):
+    def submit_all(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", ""), r4=("0", "", "")))
+        m2 = appmod.app.test_client()
+        self.login("m2", client=m2)
+        self.post("/", client=m2, action="submit", **form(r6=("1", "NTP 3초 지연", ""), r7=("0", "", "")))
+
+    def lead(self):
+        c = appmod.app.test_client()
+        self.login("lead", client=c)
+        return c
+
+    def test_member_forbidden(self):
+        self.login("m1")
+        self.assertEqual(self.c.get("/dashboard").status_code, 403)
+
+    def test_dashboard_summary(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        t = self.text(self.lead().get("/dashboard"))
+        self.assertIn("미제출 <b>3</b>", t)
+        self.assertIn("M1", t)
+        self.assertIn("1/2", t)
+
+    def test_approve_requires_all_submitted(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        lead = self.lead()
+        self.post(f"/approve/{DAY}", client=lead)
+        self.assertIsNone(self.row("SELECT * FROM days"))
+        self.assertIn("모든 점검 항목", self.text(lead.get("/dashboard")))
+
+    def test_approve_day_and_issue_list(self):
+        self.submit_all()
+        lead = self.lead()
+        t = self.text(lead.get("/dashboard"))
+        self.assertIn("이상 <b>1</b>", t)
+        self.assertIn("NTP 3초 지연", t)
+        self.post(f"/approve/{DAY}", client=lead)
+        self.assertEqual(self.row("SELECT approved_by FROM days")["approved_by"], 3)
+        self.assertEqual(self.row("SELECT action FROM audit_log WHERE target = 'day'")["action"], "approve")
+        self.assertIn("확인완료", self.text(lead.get("/dashboard")))
+
+    def test_cannot_approve_day_with_own_submission(self):
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("0", "", ""), r4=("0", "", "")))
+        lead = self.lead()
+        self.post("/", client=lead, action="submit", **form(r6=("0", "", ""), r7=("0", "", "")))
+        self.post(f"/approve/{DAY}", client=lead)
+        self.assertIsNone(self.row("SELECT * FROM days"))
+
+    def test_edit_after_approval_unapproves(self):
+        self.submit_all()
+        self.post(f"/approve/{DAY}", client=self.lead())
+        self.post("/", action="edit", item_id="3", reason="정정", **form(r3=("1", "재부팅", "submitted:1")))
+        self.assertIsNone(self.row("SELECT approved_by FROM days")["approved_by"])
+
+
 class BackupTest(Base):
     def test_backup_creates_consistent_copy(self):
         out = tempfile.mkdtemp()

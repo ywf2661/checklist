@@ -490,6 +490,57 @@ def index():
                            my_total=len(mine), my_done=sum(1 for r in mine if submitted(r)))
 
 
+# ---------------------------------------------------------------- 현황판
+
+
+def day_status(db, day):
+    rows = [r for r in sheet_rows(db, day) if not r["is_group"]]
+    owners = {}
+    for r in rows:
+        o = owners.setdefault(r["owner_name"] or "-", [0, 0])
+        o[1] += 1
+        o[0] += submitted(r)
+    return {
+        "rows": rows,
+        "total": len(rows),
+        "missing": [r for r in rows if not submitted(r)],
+        "issues": [r for r in rows if submitted(r) and r["result"]["issue"] == 1],
+        "owners": [(name, done, total) for name, (done, total) in sorted(owners.items())],
+        "checkers": {r["result"]["checker_id"] for r in rows if submitted(r)},
+        "approved": day_info(db, day),
+    }
+
+
+@app.route("/dashboard")
+@login_required("leader")
+def dashboard():
+    day = parse_day(request.args.get("day") or today())
+    return render_template("dashboard.html", day=day, s=day_status(get_db(), day))
+
+
+@app.post("/approve/<day>")
+@login_required("leader")
+def approve_day(day):
+    day = parse_day(day)
+    db = get_db()
+    s = day_status(db, day)
+    if s["approved"] and s["approved"]["approved_by"]:
+        flash("이미 확인한 날짜입니다.")
+    elif not s["total"] or s["missing"]:
+        flash("모든 점검 항목이 제출돼야 확인할 수 있습니다.")
+    elif g.user["id"] in s["checkers"]:
+        flash("본인이 제출한 항목이 있는 날은 확인할 수 없습니다. 다른 팀장이나 관리자가 확인해야 합니다.")
+    else:
+        db.execute("""INSERT INTO days(date, approved_by, approved_at) VALUES(?, ?, ?)
+                      ON CONFLICT(date) DO UPDATE SET approved_by = excluded.approved_by,
+                      approved_at = excluded.approved_at""", (day, g.user["id"], now()))
+        audit(db, g.user["id"], "day", None, "approve",
+              after={"date": day, "total": s["total"], "issues": len(s["issues"])})
+        db.commit()
+        flash(f"{day} 점검을 확인했습니다.")
+    return redirect(url_for("dashboard", day=day))
+
+
 # ---------------------------------------------------------------- 사용자 관리
 
 USER_AUDIT_COLS = ("login_id", "name", "role", "active", "fail_count")

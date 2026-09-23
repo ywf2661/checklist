@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>현황판 <small>{{ day }}</small></h1>
+<form method="get" class="no-print toolbar">
+  <label>날짜 <input type="date" name="day" value="{{ day }}"></label> <button class="primary">조회</button>
+  <span class="spacer"></span>
+  <a href="{{ url_for('index', day=day, view='all') }}">그날 전체 표 보기</a>
+</form>
+<div class="tiles">
+  <div class="tile">전체 점검항목 <b>{{ s.total }}</b></div>
+  <div class="tile t-missing">미제출 <b>{{ s.missing|length }}</b></div>
+  <div class="tile t-issue">이상 <b>{{ s.issues|length }}</b></div>
+  <div class="tile t-waiting">확인 {% if s.approved and s.approved.approved_at %}<b>완료</b>{% else %}<b>대기</b>{% endif %}</div>
+</div>
+
+<div class="card">
+  {% if s.approved and s.approved.approved_at %}
+    <span class="badge st-approved">확인완료</span> {{ s.approved.approver_name }} · {{ s.approved.approved_at|dt }}
+  {% elif s.total and not s.missing %}
+    <form method="post" action="{{ url_for('approve_day', day=day) }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="primary">{{ day }} 점검 확인</button>
+    </form> <small>모든 항목이 제출되었습니다.</small>
+  {% else %}
+    <small>모든 점검 항목이 제출되면 확인할 수 있습니다. (미제출 {{ s.missing|length }}건)</small>
+  {% endif %}
+</div>
+
+<h2>담당자별 진행</h2>
+<table>
+  <tr><th>담당자</th><th>제출</th></tr>
+  {% for name, done, total in s.owners %}
+  <tr><td>{{ name }}</td><td><span class="badge {{ 'st-approved' if done == total else 'st-draft' }}">{{ done }}/{{ total }}</span></td></tr>
+  {% endfor %}
+</table>
+
+{% if s.issues %}
+<h2>이상 항목</h2>
+<table>
+  <tr><th>번호</th><th>항목</th><th>담당자</th><th>점검자</th><th>비고</th></tr>
+  {% for r in s.issues %}
+  <tr><td class="code">{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.owner_name }}</td><td>{{ r.result.checker_name }}</td><td class="remark issue">{{ r.result.remark }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if s.missing %}
+<h2>미제출 항목</h2>
+<table>
+  <tr><th>번호</th><th>항목</th><th>담당자</th><th>상태</th></tr>
+  {% for r in s.missing %}
+  {% set label, cls = row_badge(r.result) %}
+  <tr><td class="code">{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.owner_name or '-' }}</td><td><span class="badge {{ cls }}">{{ label }}</span></td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
