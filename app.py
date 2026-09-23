@@ -281,6 +281,41 @@ def check_sheet(system_id, day):
                            items=items, remark=remark, error=error, names=names, editing=False)
 
 
+@app.post("/system/<int:system_id>/items")
+@login_required()
+def add_item(system_id):
+    db = get_db()
+    if db.execute("SELECT 1 FROM systems WHERE id = ? AND active = 1", (system_id,)).fetchone() is None:
+        abort(404)
+    text = request.form.get("text", "").strip()[:200]
+    if not text:
+        flash("추가할 항목 내용을 입력하세요.")
+    else:
+        sort = db.execute("SELECT COALESCE(MAX(sort), 0) + 1 FROM items WHERE system_id = ?", (system_id,)).fetchone()[0]
+        item_id = db.execute(
+            "INSERT INTO items(system_id, text, sort) VALUES(?, ?, ?)", (system_id, text, sort)
+        ).lastrowid
+        audit(db, g.user["id"], "item", item_id, "add", after={"system_id": system_id, "text": text})
+        db.commit()
+        flash("점검 항목을 추가했습니다.")
+    return redirect(url_for("check_sheet", system_id=system_id, day=today()))
+
+
+@app.post("/item/<int:item_id>/deactivate")
+@login_required()
+def deactivate_item(item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if item is None:
+        abort(404)
+    db.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
+    audit(db, g.user["id"], "item", item_id, "deactivate",
+          before={"text": item["text"], "active": item["active"]}, after={"active": 0})
+    db.commit()
+    flash("점검 항목을 미사용 처리했습니다. 필요하면 관리자가 다시 사용으로 바꿀 수 있습니다.")
+    return redirect(url_for("check_sheet", system_id=item["system_id"], day=today()))
+
+
 def main(argv):
     dbm.init_db(app.config["DATABASE"])
     if argv[:1] == ["init-admin"]:

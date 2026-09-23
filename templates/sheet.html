@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-{% set writable = day == today and (not check or check.status == 'draft') %}
+{% set live = not check or check.status == 'draft' %}
+{% set writable = day == today and live %}
 <h1>{{ system.name }} 점검표 <small>{{ day }}</small></h1>
 <p>상태: <b{% if check and check.has_issue %} class="issue"{% endif %}>{{ status_label(check.status if check else None, check.has_issue if check else 0) }}</b>
 {% if check %} · 점검자: {{ names[check.user_id] }}{% if check.submitted_at %} · 제출: {{ check.submitted_at }}{% endif %}{% endif %}</p>
@@ -8,14 +9,15 @@
 <form method="post" class="sheet">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <table>
-    <tr><th class="chk">체크</th><th>점검 항목</th></tr>
+    <tr><th class="chk">체크</th><th>점검 항목</th>{% if live %}<th class="no-print"></th>{% endif %}</tr>
     {% for it in items %}
     <tr>
       <td class="chk"><input type="checkbox" id="i{{ it.item_id }}" name="item" value="{{ it.item_id }}"{% if it.checked %} checked{% endif %}{% if not writable %} disabled{% endif %}></td>
       <td><label for="i{{ it.item_id }}">{{ it.item_text }}</label></td>
+      {% if live %}<td class="no-print"><button formaction="{{ url_for('deactivate_item', item_id=it.item_id) }}" formnovalidate>미사용</button></td>{% endif %}
     </tr>
     {% else %}
-    <tr><td colspan="2">점검 항목이 없습니다.</td></tr>
+    <tr><td colspan="3">점검 항목이 없습니다. 아래에서 추가하세요.</td></tr>
     {% endfor %}
   </table>
   <h2>비고</h2>
@@ -24,4 +26,12 @@
   <p><button name="action" value="save">임시저장</button> <button name="action" value="submit">제출</button></p>
   {% endif %}
 </form>
+{% if system.active %}
+<form method="post" action="{{ url_for('add_item', system_id=system.id) }}" class="no-print add-item">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label>새 점검 항목 <input name="text" maxlength="200" size="40" required></label>
+  <button>+ 항목 추가</button><br>
+  <small>항목을 추가하면 화면이 새로 고쳐집니다. 체크한 내용은 먼저 임시저장하세요. 이미 제출한 점검표에는 다음 점검부터 나타납니다.</small>
+</form>
+{% endif %}
 {% endblock %}

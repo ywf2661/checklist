@@ -195,5 +195,38 @@ class SheetTest(Base):
         self.assertEqual(self.c.get("/check/1/abc").status_code, 400)
 
 
+class ItemTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+
+    def test_member_adds_item_and_it_is_logged(self):
+        self.post("/system/1/items", text="디스크 여유 확인")
+        self.assertIsNotNone(self.row("SELECT * FROM items WHERE text = '디스크 여유 확인' AND active = 1"))
+        a = self.row("SELECT * FROM audit_log WHERE action = 'add'")
+        self.assertEqual((a["target"], a["user_id"]), ("item", 1))
+        self.assertIn("디스크 여유 확인", self.text(self.c.get(URL)))
+
+    def test_blank_item_rejected(self):
+        self.post("/system/1/items", text="   ")
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM items")["n"], 2)
+
+    def test_new_item_not_added_to_submitted_record(self):
+        self.post(URL, action="submit", item=["1", "2"])
+        self.post("/system/1/items", text="디스크 여유 확인")
+        self.assertNotIn("디스크 여유 확인", self.text(self.c.get(URL)))
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.assertIn("디스크 여유 확인", self.text(self.c.get("/check/1/2026-09-24")))
+
+    def test_deactivate_hides_item_but_keeps_history(self):
+        self.post(URL, action="submit", item=["1", "2"])
+        self.post("/item/2/deactivate")
+        self.assertEqual(self.row("SELECT active FROM items WHERE id = 2")["active"], 0)
+        self.assertEqual(self.row("SELECT action FROM audit_log WHERE target = 'item'")["action"], "deactivate")
+        self.assertIn("배치 완료 확인", self.text(self.c.get(URL)))
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.assertNotIn("배치 완료 확인", self.text(self.c.get("/check/1/2026-09-24")))
+
+
 if __name__ == "__main__":
     unittest.main()
