@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>이력 조회</h1>
+<form method="get" class="no-print toolbar">
+  <label>시작 <input type="date" name="start" value="{{ start }}"></label>
+  <label>종료 <input type="date" name="end" value="{{ end }}"></label>
+  <button class="primary">조회</button>
+  <button name="format" value="print">인쇄/PDF</button>
+  <button name="format" value="csv">엑셀(CSV)</button>
+</form>
+<table>
+  <tr><th>날짜</th><th>제출</th><th>이상</th><th>확인</th></tr>
+  {% for d in days %}
+  <tr>
+    <td><a href="{{ url_for('index', day=d.date, view='all') }}">{{ d.date }}</a></td>
+    <td><span class="badge {{ 'st-approved' if not d.missing else 'st-draft' }}">{{ d.total - d.missing|length }}/{{ d.total }}</span></td>
+    <td>{% if d.issues %}<span class="badge st-issue">{{ d.issues|length }}건</span>{% else %}-{% endif %}</td>
+    <td>{% if d.approved and d.approved.approved_at %}{{ d.approved.approver_name }} · {{ d.approved.approved_at|dt }}{% else %}<span class="badge st-none">대기</span>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">기록이 없습니다.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

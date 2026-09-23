@@ -541,6 +541,54 @@ def approve_day(day):
     return redirect(url_for("dashboard", day=day))
 
 
+# ---------------------------------------------------------------- 이력·출력
+
+CSV_HEADER = ["날짜", "번호", "점검항목", "담당자", "점검자", "이상", "비고", "상태", "제출시각", "확인자", "확인시각"]
+
+
+def csv_cell(v):
+    """엑셀이 수식으로 해석하지 않도록 위험한 첫 글자 앞에 ' 를 붙인다."""
+    v = "" if v is None else str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+@app.route("/history")
+@login_required()
+def history():
+    start = parse_day(request.args.get("start") or today())
+    end = parse_day(request.args.get("end") or start)
+    if start > end:
+        start, end = end, start
+    db = get_db()
+    dates = [r["date"] for r in db.execute(
+        "SELECT DISTINCT date FROM results WHERE date BETWEEN ? AND ? ORDER BY date", (start, end))]
+    days = [{"date": d, **day_status(db, d)} for d in dates]
+    fmt = request.args.get("format")
+    if fmt == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(CSV_HEADER)
+        for d in days:
+            ap = d["approved"]
+            for r in d["rows"]:
+                res = r["result"]
+                w.writerow([csv_cell(v) for v in (
+                    d["date"], r["code"], r["title"], r["owner_name"],
+                    res["checker_name"] if res else "",
+                    ("유" if res["issue"] else "무") if res and res["issue"] is not None else "",
+                    res["remark"] if res else "",
+                    "제출" if submitted(r) else ("작성중" if res else "미입력"),
+                    fmt_dt(res["submitted_at"]) if res and res["submitted_at"] else "",
+                    ap["approver_name"] if ap else "", fmt_dt(ap["approved_at"]) if ap and ap["approved_at"] else "")])
+        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename=checklist_{start}_{end}.csv"})
+    if fmt == "print":
+        for d in days:
+            d["sheet"] = keep_with_groups(sheet_rows(db, d["date"]), lambda r: True)
+        return render_template("print.html", days=days, start=start, end=end)
+    return render_template("history.html", days=days, start=start, end=end)
+
+
 # ---------------------------------------------------------------- 사용자 관리
 
 USER_AUDIT_COLS = ("login_id", "name", "role", "active", "fail_count")

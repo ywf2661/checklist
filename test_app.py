@@ -438,6 +438,38 @@ class DashboardTest(Base):
         self.assertIsNone(self.row("SELECT approved_by FROM days")["approved_by"])
 
 
+class HistoryTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+        self.post("/", action="submit", **form(r3=("1", '=HYPERLINK("http://x")', ""), r4=("0", "", "")))
+
+    def test_history_summary(self):
+        t = self.text(self.c.get(f"/history?start={DAY}"))
+        self.assertIn(DAY, t)
+        self.assertIn("2/4", t)
+
+    def test_csv_escapes_formula_and_has_bom(self):
+        r = self.c.get(f"/history?start={DAY}&format=csv")
+        self.assertIn("attachment", r.headers["Content-Disposition"])
+        t = self.text(r)
+        self.assertTrue(t.startswith("\ufeff"))
+        rows = list(csv.reader(io.StringIO(t.lstrip("\ufeff"))))
+        self.assertEqual(len(rows), 5)  # 머리글 + 점검 항목 4개
+        self.assertEqual(rows[1][1], "1-1-1")
+        self.assertEqual(rows[1][6], "'=HYPERLINK(\"http://x\")")
+        self.assertEqual(rows[3][7], "미입력")
+
+    def test_print_view_like_paper(self):
+        t = self.text(self.c.get(f"/history?start={DAY}&format=print"))
+        self.assertIn("네트워크상태", t)
+        self.assertIn("백본 및 각 층 네트워크 상태", t)
+        self.assertIn("확인자", t)
+
+    def test_reversed_range_still_works(self):
+        self.assertIn("2/4", self.text(self.c.get(f"/history?start=2026-09-24&end={DAY}")))
+
+
 class BackupTest(Base):
     def test_backup_creates_consistent_copy(self):
         out = tempfile.mkdtemp()

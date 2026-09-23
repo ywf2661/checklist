@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}점검 기록 {{ start }} ~ {{ end }}{% endblock %}
+{% block content %}
+<p class="no-print"><button onclick="window.print()" class="primary">인쇄 / PDF로 저장</button>
+  <small>인쇄 창에서 프린터를 "PDF로 저장"으로 고르면 PDF 파일이 됩니다.</small></p>
+{% for d in days %}
+<section class="page">
+  <h2>일일 시스템 점검표 — {{ d.date }}</h2>
+  <table class="sheet">
+    <tr><th>번호</th><th>점검 항목</th><th>담당자</th><th>점검자</th><th>이상</th><th>비고</th></tr>
+    {% for r in d.sheet %}
+    {% if r.is_group %}
+    <tr class="group"><td class="code">{{ r.code }}</td><td colspan="5">{{ r.title }}</td></tr>
+    {% else %}
+    {% set res = r.result if (r.result and r.result.status == 'submitted') else None %}
+    <tr><td class="code">{{ r.code }}</td><td style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td>
+      <td>{{ r.owner_name or '-' }}</td><td>{{ res.checker_name if res else '' }}</td>
+      <td>{% if res %}{{ '유' if res.issue else '무' }}{% else %}미제출{% endif %}</td>
+      <td class="remark">{{ res.remark if res else '' }}</td></tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+  <table class="sign">
+    <tr><th>확인자</th><td>{{ d.approved.approver_name if d.approved and d.approved.approved_at else '' }}</td>
+        <th>확인 시각</th><td>{{ d.approved.approved_at|dt if d.approved and d.approved.approved_at else '' }}</td></tr>
+  </table>
+</section>
+{% else %}
+<p>기록이 없습니다.</p>
+{% endfor %}
+{% endblock %}

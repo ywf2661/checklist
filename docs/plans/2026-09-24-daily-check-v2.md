@@ -1310,8 +1310,8 @@ class HistoryTest(Base):
         r = self.c.get(f"/history?start={DAY}&format=csv")
         self.assertIn("attachment", r.headers["Content-Disposition"])
         t = self.text(r)
-        self.assertTrue(t.startswith("﻿"))
-        rows = list(csv.reader(io.StringIO(t.lstrip("﻿"))))
+        self.assertTrue(t.startswith("\ufeff"))
+        rows = list(csv.reader(io.StringIO(t.lstrip("\ufeff"))))
         self.assertEqual(len(rows), 5)  # 머리글 + 점검 항목 4개
         self.assertEqual(rows[1][1], "1-1-1")
         self.assertEqual(rows[1][6], "'=HYPERLINK(\"http://x\")")
@@ -1371,7 +1371,7 @@ def history():
                     "제출" if submitted(r) else ("작성중" if res else "미입력"),
                     fmt_dt(res["submitted_at"]) if res and res["submitted_at"] else "",
                     ap["approver_name"] if ap else "", fmt_dt(ap["approved_at"]) if ap and ap["approved_at"] else "")])
-        return Response("﻿" + buf.getvalue(), mimetype="text/csv",
+        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename=checklist_{start}_{end}.csv"})
     if fmt == "print":
         for d in days:
