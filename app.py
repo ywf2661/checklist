@@ -386,6 +386,68 @@ def dashboard():
     )
 
 
+CSV_HEADER = ["날짜", "시스템", "점검자", "제출시각", "상태", "확인자", "확인시각", "점검항목", "체크", "비고"]
+
+
+def query_history(start, end, system_id=None):
+    sql = """SELECT c.*, s.name AS system_name, u.name AS checker_name, a.name AS approver_name
+             FROM checks c
+             JOIN systems s ON s.id = c.system_id
+             JOIN users u ON u.id = c.user_id
+             LEFT JOIN users a ON a.id = c.approved_by
+             WHERE c.date BETWEEN ? AND ?"""
+    args = [start, end]
+    if system_id:
+        sql += " AND c.system_id = ?"
+        args.append(system_id)
+    sql += " ORDER BY c.date, s.sort, s.name"
+    db = get_db()
+    rows = [dict(r) for r in db.execute(sql, args)]
+    for r in rows:
+        r["lines"] = [dict(i) for i in db.execute(
+            "SELECT item_text, checked FROM check_items WHERE check_id = ? ORDER BY rowid", (r["id"],))]
+    return rows
+
+
+def csv_cell(v):
+    """엑셀이 수식으로 해석하지 않도록 위험한 첫 글자 앞에 ' 를 붙인다."""
+    v = "" if v is None else str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+def csv_response(rows, start, end):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(CSV_HEADER)
+    for r in rows:
+        for it in r["lines"] or [{"item_text": "", "checked": 0}]:
+            w.writerow([csv_cell(v) for v in (
+                r["date"], r["system_name"], r["checker_name"], r["submitted_at"],
+                status_label(r["status"], r["has_issue"]), r["approver_name"], r["approved_at"],
+                it["item_text"], "O" if it["checked"] else "X", r["remark"])])
+    return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=checklist_{start}_{end}.csv"})
+
+
+@app.route("/history")
+@login_required()
+def history():
+    start = parse_day(request.args.get("start") or today())
+    end = parse_day(request.args.get("end") or start)
+    if start > end:
+        start, end = end, start
+    system_id = request.args.get("system_id", type=int)
+    rows = query_history(start, end, system_id)
+    fmt = request.args.get("format")
+    if fmt == "csv":
+        return csv_response(rows, start, end)
+    if fmt == "print":
+        return render_template("print.html", rows=rows, start=start, end=end)
+    systems = get_db().execute("SELECT id, name FROM systems ORDER BY sort, name").fetchall()
+    return render_template("history.html", rows=rows, start=start, end=end,
+                           system_id=system_id, systems=systems)
+
+
 def main(argv):
     dbm.init_db(app.config["DATABASE"])
     if argv[:1] == ["init-admin"]:

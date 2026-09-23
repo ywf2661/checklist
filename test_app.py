@@ -275,5 +275,36 @@ class ReviewTest(Base):
         self.assertIn("확인 대기 <b>1</b>", t)
 
 
+class HistoryTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+        self.post(URL, action="submit", item=["1"], remark='=HYPERLINK("http://x")')
+
+    def test_history_lists_check(self):
+        t = self.text(self.c.get(f"/history?start={DAY}"))
+        self.assertIn("주문서버", t)
+        self.assertIn("HYPERLINK", t)
+
+    def test_csv_escapes_formula_and_has_bom(self):
+        r = self.c.get(f"/history?start={DAY}&format=csv")
+        self.assertIn("attachment", r.headers["Content-Disposition"])
+        t = self.text(r)
+        self.assertTrue(t.startswith("\ufeff"))
+        rows = list(csv.reader(io.StringIO(t.lstrip("\ufeff"))))
+        self.assertEqual(len(rows), 3)  # 머리글 + 항목 2개
+        self.assertEqual(rows[1][-1], "'=HYPERLINK(\"http://x\")")
+        self.assertEqual(rows[2][-2], "X")
+
+    def test_print_view(self):
+        t = self.text(self.c.get(f"/history?start={DAY}&format=print"))
+        self.assertIn("프로세스 기동 확인", t)
+        self.assertIn("✘", t)
+
+    def test_reversed_range_still_works(self):
+        t = self.text(self.c.get(f"/history?start=2026-09-24&end={DAY}"))
+        self.assertIn("주문서버", t)
+
+
 if __name__ == "__main__":
     unittest.main()

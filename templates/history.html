@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>이력 조회</h1>
+<form method="get" class="no-print">
+  <label>시작 <input type="date" name="start" value="{{ start }}"></label>
+  <label>종료 <input type="date" name="end" value="{{ end }}"></label>
+  <label>시스템
+    <select name="system_id"><option value="">전체</option>
+      {% for s in systems %}<option value="{{ s.id }}"{% if s.id == system_id %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+    </select></label>
+  <button>조회</button>
+  <button name="format" value="print">인쇄/PDF</button>
+  <button name="format" value="csv">엑셀(CSV)</button>
+</form>
+<table>
+  <tr><th>날짜</th><th>시스템</th><th>점검자</th><th>상태</th><th>확인자</th><th>비고</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.date }}</td>
+    <td><a href="{{ url_for('check_sheet', system_id=r.system_id, day=r.date) }}">{{ r.system_name }}</a></td>
+    <td>{{ r.checker_name }}</td>
+    <td{% if r.has_issue %} class="issue"{% endif %}>{{ status_label(r.status, r.has_issue) }}</td>
+    <td>{{ r.approver_name or '-' }}</td>
+    <td class="remark">{{ r.remark }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6">기록이 없습니다.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
