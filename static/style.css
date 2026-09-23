@@ -104,6 +104,22 @@ button.small { padding: .2rem .6rem; font-size: .82rem; color: var(--muted); }
 .narrow button.primary { width: 100%; padding: .65rem; margin-top: .5rem; }
 .logo { text-align: center; font-size: 2.2rem; color: var(--navy); margin-bottom: -.5rem; }
 
+/* 계층 점검표 */
+.sheet td.code, .items td.code { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; width: 4.5rem; }
+.sheet tr.group td, .items tr.group td { background: #eef2f9; color: var(--navy); font-weight: bold; }
+.items tr.inactive td { opacity: .5; }
+.issue-pick { white-space: nowrap; }
+.issue-pick label { margin-right: .6rem; cursor: pointer; }
+.issue-pick label.yes { color: var(--red); }
+.issue-pick input { accent-color: var(--navy); width: 1.1rem; height: 1.1rem; vertical-align: -2px; }
+.remark-input { width: 100%; min-width: 10rem; }
+.remark-input.reason { margin-top: .4rem; border-color: var(--yellow); }
+.nowrap { white-space: nowrap; }
+.toolbar .spacer { flex: 1; }
+.tab { padding: .3rem .9rem; border-radius: 999px; color: var(--muted); border: 1px solid var(--line); }
+.tab.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.tab:hover { text-decoration: none; }
+
 /* 인쇄: 흑백 문서 모양 */
 .page { page-break-after: always; margin-bottom: 2rem; }
 @media print {

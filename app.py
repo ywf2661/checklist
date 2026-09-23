@@ -305,10 +305,189 @@ def bulk_items():
     return redirect(url_for("items_page"))
 
 
-@app.route("/")
+# ---------------------------------------------------------------- 오늘 점검
+
+
+def result_token(res):
+    """화면을 연 시점의 줄 상태. 저장할 때 달라졌으면 다른 사람이 먼저 손댄 것."""
+    return f"{res['status']}:{res['checker_id']}" if res else ""
+
+
+def row_badge(res):
+    if res is None:
+        return "미입력", "st-none"
+    if res["status"] == "draft":
+        return "작성중", "st-draft"
+    return ("이상 유", "st-issue") if res["issue"] else ("이상 무", "st-approved")
+
+
+app.jinja_env.globals.update(result_token=result_token, row_badge=row_badge)
+
+
+def sheet_rows(db, day):
+    """그날 표의 줄(번호순). 점검 줄에는 'result'를 붙이고, 제출된 줄은 제출 당시 번호·항목명·담당자를 보여준다.
+    미사용 항목은 그날 기록이 있을 때만 나온다."""
+    results = {r["item_id"]: dict(r) for r in db.execute(
+        "SELECT r.*, u.name AS checker_name FROM results r JOIN users u ON u.id = r.checker_id WHERE r.date = ?",
+        (day,))}
+    rows = []
+    for it in load_items(db, active_only=False):
+        res = results.get(it["id"])
+        if it["is_group"]:
+            if it["active"]:
+                rows.append(it)
+            continue
+        if not it["active"] and res is None:
+            continue
+        it["result"] = res
+        if res and res["status"] == "submitted":
+            it.update(code=res["code"], title=res["title"], owner_name=res["owner_name"])
+        rows.append(it)
+    rows.sort(key=lambda r: code_key(r["code"]))
+    return rows
+
+
+def keep_with_groups(rows, keep):
+    """keep()을 통과한 점검 줄과, 그 줄들의 상위 구분 줄만 남긴다."""
+    codes = [r["code"] for r in rows if not r["is_group"] and keep(r)]
+    return [r for r in rows
+            if (not r["is_group"] and keep(r))
+            or (r["is_group"] and any(c.startswith(r["code"] + "-") for c in codes))]
+
+
+def submitted(r):
+    return bool(r.get("result") and r["result"]["status"] == "submitted")
+
+
+def day_info(db, day):
+    return db.execute("""SELECT d.*, u.name AS approver_name FROM days d
+                         LEFT JOIN users u ON u.id = d.approved_by WHERE d.date = ?""", (day,)).fetchone()
+
+
+def posted_issue(item_id):
+    v = request.form.get(f"issue_{item_id}")
+    return int(v) if v in ("0", "1") else None
+
+
+def save_rows(db, day, action):
+    """임시저장/제출. (오류 메시지, 성공 메시지) 중 하나를 채워 돌려준다."""
+    if day != today():
+        return "오늘 점검만 입력할 수 있습니다.", None
+    items = {r["id"]: r for r in load_items(db) if not r["is_group"]}
+    existing = {r["item_id"]: r for r in db.execute("SELECT * FROM results WHERE date = ?", (day,))}
+    changes = []
+    for raw in request.form.getlist("row"):
+        it = items.get(int(raw)) if raw.isdigit() else None
+        if it is None:
+            continue
+        res = existing.get(it["id"])
+        if request.form.get(f"base_{it['id']}", "") != result_token(res):
+            return "다른 사람이 먼저 입력한 항목이 있습니다. 새로고침해서 확인한 뒤 다시 저장하세요.", None
+        if res and res["status"] == "submitted":
+            continue
+        issue = posted_issue(it["id"])
+        remark = request.form.get(f"remark_{it['id']}", "").strip()[:500]
+        if issue is None and not remark and res is None:
+            continue
+        submit = action == "submit" and issue is not None
+        if submit and issue == 1 and not remark:
+            return f"{it['code']} 항목: 이상 '유'는 비고를 입력해야 합니다.", None
+        changes.append((it, res, issue, remark, submit))
+    if action == "submit" and not any(c[4] for c in changes):
+        return "제출할 항목이 없습니다. 이상 유/무를 선택하세요.", None
+    try:
+        for it, res, issue, remark, submit in changes:
+            vals = {"date": day, "item_id": it["id"], "code": it["code"], "title": it["title"],
+                    "owner_name": it["owner_name"], "checker_id": g.user["id"], "issue": issue, "remark": remark,
+                    "status": "submitted" if submit else "draft", "submitted_at": now() if submit else None}
+            if res is None:
+                db.execute("""INSERT INTO results(date, item_id, code, title, owner_name, checker_id, issue, remark,
+                              status, submitted_at) VALUES(:date, :item_id, :code, :title, :owner_name, :checker_id,
+                              :issue, :remark, :status, :submitted_at)""", vals)
+            else:
+                db.execute("""UPDATE results SET code = :code, title = :title, owner_name = :owner_name,
+                              checker_id = :checker_id, issue = :issue, remark = :remark, status = :status,
+                              submitted_at = :submitted_at WHERE date = :date AND item_id = :item_id""", vals)
+            if submit:
+                audit(db, g.user["id"], "result", it["id"], "submit",
+                      after={"date": day, "code": it["code"], "issue": issue, "remark": remark})
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return "다른 사람이 먼저 입력한 항목이 있습니다. 새로고침해서 확인한 뒤 다시 저장하세요.", None
+    db.commit()
+    if action == "save":
+        return None, "임시저장했습니다."
+    left = sum(1 for r in sheet_rows(db, day)
+               if not r["is_group"] and r["owner_id"] == g.user["id"] and not submitted(r))
+    return None, f"{sum(1 for c in changes if c[4])}건 제출했습니다. 남은 내 항목 {left}건."
+
+
+def edit_row(db, day, item_id):
+    """제출된 줄을 사유와 함께 수정. 그날 확인이 되어 있었으면 풀린다."""
+    res = db.execute("SELECT * FROM results WHERE date = ? AND item_id = ?", (day, item_id)).fetchone()
+    if res is None or res["status"] != "submitted":
+        return "제출된 항목만 수정할 수 있습니다.", None
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        return "수정 사유를 입력하세요.", None
+    issue = posted_issue(item_id)
+    remark = request.form.get(f"remark_{item_id}", "").strip()[:500]
+    if issue is None:
+        return "이상 유/무를 선택하세요.", None
+    if issue == 1 and not remark:
+        return "이상 '유'는 비고를 입력해야 합니다.", None
+    db.execute("UPDATE results SET issue = ?, remark = ? WHERE id = ?", (issue, remark, res["id"]))
+    audit(db, g.user["id"], "result", item_id, "edit",
+          before={"date": day, "code": res["code"], "issue": res["issue"], "remark": res["remark"]},
+          after={"date": day, "code": res["code"], "issue": issue, "remark": remark}, reason=reason)
+    d = day_info(db, day)
+    if d and d["approved_by"]:
+        db.execute("UPDATE days SET approved_by = NULL, approved_at = NULL WHERE date = ?", (day,))
+        audit(db, g.user["id"], "day", None, "unapprove",
+              before={"date": day, "approved_by": d["approved_by"]}, reason="항목 수정으로 확인 해제")
+    db.commit()
+    return None, "수정했습니다."
+
+
+@app.route("/", methods=["GET", "POST"])
 @login_required()
 def index():
-    return render_template("index.html")  # Task 2에서 교체
+    day = parse_day(request.args.get("day") or today())
+    view = "all" if request.args.get("view") == "all" else "mine"
+    db = get_db()
+    error = None
+    editing = request.args.get("edit", type=int)
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "edit":
+            editing = request.form.get("item_id", type=int)
+            error, msg = edit_row(db, day, editing)
+        elif action in ("save", "submit"):
+            error, msg = save_rows(db, day, action)
+        else:
+            abort(400)
+        if error is None:
+            flash(msg)
+            return redirect(url_for("index", day=day, view=view))
+    rows = sheet_rows(db, day)
+    posted = set(request.form.getlist("row")) if error else set()
+    for r in rows:
+        if r["is_group"]:
+            continue
+        res = r["result"]
+        r["draft_issue"] = res["issue"] if res else None
+        r["draft_remark"] = res["remark"] if res else ""
+        if str(r["id"]) in posted:
+            r["draft_issue"] = posted_issue(r["id"])
+            r["draft_remark"] = request.form.get(f"remark_{r['id']}", "")
+    mine = [r for r in rows if not r["is_group"] and r["owner_id"] == g.user["id"]]
+    if view == "mine":
+        rows = keep_with_groups(rows, lambda r: r["owner_id"] == g.user["id"])
+    else:
+        rows = keep_with_groups(rows, lambda r: True)
+    return render_template("index.html", rows=rows, day=day, today=today(), view=view, error=error,
+                           editing=editing, day_row=day_info(db, day),
+                           my_total=len(mine), my_done=sum(1 for r in mine if submitted(r)))
 
 
 # ---------------------------------------------------------------- 사용자 관리

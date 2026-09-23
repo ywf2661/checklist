@@ -1,2 +1,59 @@
 {% extends "base.html" %}
-{% block content %}<h1>오늘 점검</h1>{% endblock %}
+{% block content %}
+{% set writable = day == today and not editing %}
+<h1>{% if day == today %}오늘 점검{% else %}점검 기록{% endif %} <small>{{ day }}</small></h1>
+<div class="toolbar no-print">
+  <span>내 항목 <b>{{ my_done }}/{{ my_total }}</b> 제출</span>
+  {% if day_row and day_row.approved_at %}<span class="badge st-approved">확인완료 · {{ day_row.approver_name }} {{ day_row.approved_at|dt }}</span>{% endif %}
+  <span class="spacer"></span>
+  <a class="tab{% if view == 'mine' %} on{% endif %}" href="{{ url_for('index', day=day, view='mine') }}">내 항목</a>
+  <a class="tab{% if view == 'all' %} on{% endif %}" href="{{ url_for('index', day=day, view='all') }}">전체</a>
+</div>
+{% if error %}<p class="flash">{{ error }}</p>{% endif %}
+<form method="post" action="{{ url_for('index', day=day, view=view) }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  {% if editing %}<input type="hidden" name="item_id" value="{{ editing }}">{% endif %}
+  <table class="sheet">
+    <tr><th>번호</th><th>점검 항목</th><th>담당자</th><th>이상</th><th>비고</th><th>상태</th></tr>
+    {% for r in rows %}
+    {% if r.is_group %}
+    <tr class="group"><td class="code">{{ r.code }}</td><td colspan="5" style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td></tr>
+    {% else %}
+    {% set res = r.result %}
+    {% set open = (writable and not (res and res.status == 'submitted')) or editing == r.id %}
+    <tr>
+      <td class="code">{{ r.code }}</td>
+      <td style="padding-left: {{ 0.9 + (r.code|depth) * 1.2 }}rem">{{ r.title }}</td>
+      <td>{{ r.owner_name or '-' }}{% if res and res.checker_id != r.owner_id %}<br><small>점검: {{ res.checker_name }}</small>{% endif %}</td>
+      {% if open %}
+      <td class="issue-pick">
+        <input type="hidden" name="row" value="{{ r.id }}">
+        <input type="hidden" name="base_{{ r.id }}" value="{{ result_token(res) }}">
+        <label><input type="radio" name="issue_{{ r.id }}" value="0"{% if r.draft_issue == 0 %} checked{% endif %}> 무</label>
+        <label class="yes"><input type="radio" name="issue_{{ r.id }}" value="1"{% if r.draft_issue == 1 %} checked{% endif %}> 유</label>
+      </td>
+      <td><input name="remark_{{ r.id }}" value="{{ r.draft_remark }}" maxlength="500" class="remark-input">
+        {% if editing == r.id %}<input name="reason" placeholder="수정 사유 (필수)" class="remark-input reason">{% endif %}</td>
+      {% else %}
+      <td>{% if res and res.issue is not none %}<b class="{{ 'issue' if res.issue }}">{{ '유' if res.issue else '무' }}</b>{% else %}-{% endif %}</td>
+      <td class="remark">{{ res.remark if res else '' }}</td>
+      {% endif %}
+      {% set label, cls = row_badge(res) %}
+      <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>
+        {% if res and res.status == 'submitted' and not editing %} <a class="no-print" href="{{ url_for('index', day=day, view=view, edit=r.id) }}">수정</a>{% endif %}</td>
+    </tr>
+    {% endif %}
+    {% else %}
+    <tr><td colspan="6">{% if view == 'mine' %}내 담당 항목이 없습니다. '전체'를 눌러 보세요.{% else %}등록된 점검 항목이 없습니다. '항목 관리'에서 추가하세요.{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% if editing %}
+  <p class="actions"><button name="action" value="edit" class="primary">수정 저장</button>
+    <a href="{{ url_for('index', day=day, view=view) }}">취소</a></p>
+  {% elif writable and rows %}
+  <p class="actions"><button name="action" value="save">임시저장</button>
+    <button name="action" value="submit" class="primary">제출</button>
+    <small>이상 유/무를 고른 항목만 제출됩니다. '유'는 비고가 필요합니다.</small></p>
+  {% endif %}
+</form>
+{% endblock %}

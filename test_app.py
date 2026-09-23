@@ -263,6 +263,122 @@ class AdminTest(Base):
         self.assertNotIn("pw_hash", a["before"] + a["after"])
 
 
+def form(**rows):
+    """form(r3=("0", "", ""), ...) → 폼 필드. 값은 (issue, remark, base)."""
+    data = {"row": []}
+    for key, (issue, remark, base) in rows.items():
+        i = key[1:]
+        data["row"].append(i)
+        if issue is not None:
+            data[f"issue_{i}"] = issue
+        data[f"remark_{i}"] = remark
+        data[f"base_{i}"] = base
+    return data
+
+
+class SheetTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.login("m1")
+
+    def test_mine_view_shows_only_my_items_with_parent_groups(self):
+        t = self.text(self.c.get("/"))
+        self.assertIn("백본 및 각 층 네트워크 상태", t)
+        self.assertIn("네트워크상태", t)
+        self.assertNotIn("시각동기화", t)
+        self.assertNotIn("시스템 및 업무 서비스", t)
+        self.assertIn("0/2", t)
+
+    def test_all_view_natural_sort(self):
+        t = self.text(self.c.get("/?view=all"))
+        self.assertLess(t.index("시스템 및 업무 서비스"), t.index("시각동기화"))
+        self.assertLess(t.index("시각동기화"), t.index("전화 및 녹취"))
+
+    def test_submit_only_selected_rows(self):
+        r = self.post("/", action="submit", **form(r3=("0", "", ""), r4=(None, "", "")))
+        self.assertEqual(r.status_code, 302)
+        res = self.row("SELECT * FROM results WHERE item_id = 3")
+        self.assertEqual((res["status"], res["issue"], res["checker_id"], res["title"]), ("submitted", 0, 1, "백본 및 각 층 네트워크 상태"))
+        self.assertIsNone(self.row("SELECT * FROM results WHERE item_id = 4"))
+        t = self.text(self.c.get("/"))
+        self.assertIn("1건 제출", t)
+        self.assertIn("남은 내 항목 1건", t)
+        self.assertEqual(self.row("SELECT action FROM audit_log")["action"], "submit")
+
+    def test_issue_yes_requires_remark_and_keeps_input(self):
+        t = self.text(self.post("/", action="submit", **form(r3=("1", "", ""), r4=("0", "메모", ""))))
+        self.assertIn("비고를 입력", t)
+        self.assertIn('name="issue_3" value="1" checked', t)
+        self.assertIn('value="메모"', t)
+        self.assertIsNone(self.row("SELECT * FROM results"))
+
+    def test_save_draft_then_page_shows_values(self):
+        self.post("/", action="save", **form(r3=("1", "점검중", "")))
+        self.assertEqual(self.row("SELECT status FROM results")["status"], "draft")
+        t = self.text(self.c.get("/"))
+        self.assertIn('name="issue_3" value="1" checked', t)
+        self.assertIn('value="점검중"', t)
+        self.assertIn('name="base_3" value="draft:1"', t)
+
+    def test_submitted_row_is_locked(self):
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        t = self.text(self.c.get("/"))
+        self.assertNotIn('name="issue_3"', t)
+        self.assertIn('name="issue_4"', t)
+
+    def test_only_today_can_be_written(self):
+        t = self.text(self.post("/?day=2026-09-22", action="save", **form(r3=("0", "", ""))))
+        self.assertIn("오늘 점검만", t)
+        self.assertIsNone(self.row("SELECT * FROM results"))
+
+    def test_stale_page_rejected(self):
+        self.post("/", action="save", **form(r3=("0", "m1", "")))
+        other = appmod.app.test_client()
+        self.login("m2", client=other)
+        t = self.text(self.post("/", client=other, action="save", **form(r3=("1", "m2", ""))))
+        self.assertIn("먼저 입력", t)
+        self.assertEqual(self.row("SELECT remark FROM results")["remark"], "m1")
+        self.post("/", client=other, action="submit", **form(r3=("0", "대무", "draft:1")))
+        self.assertEqual(self.row("SELECT checker_id FROM results")["checker_id"], 2)
+
+    def test_proxy_entry_shows_checker(self):
+        other = appmod.app.test_client()
+        self.login("m2", client=other)
+        self.post("/", client=other, action="submit", **form(r3=("0", "", "")))
+        self.assertIn("점검: M2", self.text(self.c.get("/")))
+
+    def test_snapshot_kept_after_rename(self):
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        self.exec("UPDATE items SET title = '바뀐 문구' WHERE id = 3")
+        t = self.text(self.c.get("/"))
+        self.assertIn("백본 및 각 층 네트워크 상태", t)
+        self.assertNotIn("바뀐 문구", t)
+
+    def test_edit_requires_reason_and_logs(self):
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        self.assertIn('name="reason"', self.text(self.c.get("/?edit=3")))
+        t = self.text(self.post("/", action="edit", item_id="3", **form(r3=("1", "재부팅", "submitted:1"))))
+        self.assertIn("수정 사유", t)
+        self.assertEqual(self.row("SELECT issue FROM results")["issue"], 0)
+        self.post("/", action="edit", item_id="3", reason="확인 누락", **form(r3=("1", "재부팅", "submitted:1")))
+        res = self.row("SELECT * FROM results")
+        self.assertEqual((res["issue"], res["remark"], res["checker_id"]), (1, "재부팅", 1))
+        a = self.row("SELECT * FROM audit_log WHERE action = 'edit'")
+        self.assertEqual((json.loads(a["before"])["issue"], json.loads(a["after"])["issue"], a["reason"]), (0, 1, "확인 누락"))
+
+    def test_inactive_item_hidden_but_record_kept(self):
+        self.post("/", action="submit", **form(r3=("0", "", "")))
+        self.exec("UPDATE items SET active = 0 WHERE id IN (3, 4)")
+        t = self.text(self.c.get("/"))
+        self.assertIn("백본 및 각 층 네트워크 상태", t)
+        self.assertNotIn("인터넷 방화벽", t)
+        appmod.app.config["TODAY"] = "2026-09-24"
+        self.assertNotIn("백본 및 각 층 네트워크 상태", self.text(self.c.get("/")))
+
+    def test_bad_date_rejected(self):
+        self.assertEqual(self.c.get("/?day=abc").status_code, 400)
+
+
 class BackupTest(Base):
     def test_backup_creates_consistent_copy(self):
         out = tempfile.mkdtemp()
