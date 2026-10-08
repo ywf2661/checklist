@@ -20,7 +20,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_secret():
-    path = os.path.join(BASE, "secret.key")
+    path = os.environ.get("CHECKLIST_SECRET", os.path.join(BASE, "secret.key"))
     if not os.path.exists(path):
         with open(path, "w") as f:
             f.write(secrets.token_hex(32))

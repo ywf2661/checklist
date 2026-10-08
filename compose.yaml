@@ -1,0 +1,12 @@
+services:
+  checklist:
+    build: .
+    image: checklist:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+volumes:
+  data:

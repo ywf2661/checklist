@@ -18,6 +18,18 @@
    ```
    포트·주소 변경: 환경변수 `CHECKLIST_PORT`, `CHECKLIST_HOST`. DB 위치 변경: `CHECKLIST_DB`.
 
+## 도커로 실행
+
+```
+docker compose up -d --build                                   # http://서버주소:8080
+docker compose exec checklist python app.py init-admin         # 관리자 계정 생성(최초 1회)
+docker compose exec checklist python app.py backup /data/backup  # 백업 (볼륨 안에 저장)
+```
+`checklist.db`, `secret.key`는 `data` 볼륨(`/data`)에 저장되어 컨테이너를 다시 만들어도 유지된다. 시간대는 한국시간(KST).
+
+인터넷 없는 서버: 인터넷 되는 PC에서 `docker compose build` 후 `docker save -o checklist.tar checklist:latest`,
+서버로 `checklist.tar`와 `compose.yaml`을 옮겨 `docker load -i checklist.tar` 후 `docker compose up -d`.
+
 ## 처음 쓸 때
 
 1. 관리자로 로그인 → 비밀번호 변경.
